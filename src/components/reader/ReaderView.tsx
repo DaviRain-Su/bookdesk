@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -11,9 +11,13 @@ import {
   Search as SearchIcon,
   TriangleAlert,
   Trash2,
+  Type,
   UserRound,
 } from "lucide-react";
+import type { ReadingSettings } from "../../mygo";
+import { convertHan } from "../../lib/han";
 import FindPopover from "./FindPopover";
+import ReaderSettingsPanel from "./ReaderSettingsPanel";
 import TocPopover from "./TocPopover";
 import {
   isEnglishSelection,
@@ -29,9 +33,11 @@ export interface ReaderBook {
 
 interface Props {
   book: ReaderBook;
+  settings: ReadingSettings;
   initialCfi: string | null;
   initialSpineIndex: number;
   initialPercent: number;
+  onSettingsChange: (patch: Partial<ReadingSettings>) => void;
   onClose: () => void;
   onProgress: (progress: ReaderProgress) => void;
 }
@@ -39,15 +45,18 @@ interface Props {
 /** 全屏阅读：一本书占满主区域，和书卡共用同一个 epub.js 引擎。 */
 export default function ReaderView({
   book,
+  settings,
   initialCfi,
   initialSpineIndex,
   initialPercent,
+  onSettingsChange,
   onClose,
   onProgress,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const reader = useEpubReader(hostRef, {
     bookId: book.id,
@@ -55,12 +64,31 @@ export default function ReaderView({
     initialCfi,
     initialSpineIndex,
     initialPercent,
+    settings,
     onProgress,
   });
+
+  const spread = settings.spread && !settings.vertical;
+  const pageWidth = spread ? settings.columnWidth * 2 + 48 : settings.columnWidth;
+  const displayChapter = reader.chapter
+    ? convertHan(reader.chapter, settings.convert)
+    : "";
+  const displayToc = useMemo(
+    () =>
+      reader.toc.map((entry) => ({
+        ...entry,
+        label: convertHan(entry.label, settings.convert),
+      })),
+    [reader.toc, settings.convert],
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return;
+      }
       if (findOpen) {
         setFindOpen(false);
         return;
@@ -77,62 +105,89 @@ export default function ReaderView({
         reader.dismissHover();
         return;
       }
+      if (settings.zen) {
+        onSettingsChange({ zen: false });
+        return;
+      }
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
+    settingsOpen,
     findOpen,
     tocOpen,
     reader.selection,
     reader.hover,
     reader.dismissSelection,
     reader.dismissHover,
+    settings.zen,
+    onSettingsChange,
     onClose,
   ]);
 
   return (
-    <section className="reader-overlay" aria-label="全屏阅读">
-      <header className="reader-top">
-        <button className="reader-back" onClick={onClose} title="回到书桌（Esc）">
-          <ArrowLeft size={16} />
-          <span>书桌</span>
-        </button>
-        <div className="reader-heading">
-          <span className="reader-title">{book.title}</span>
-          <span className="reader-sub">
-            {book.author || "未知作者"}
-            {reader.chapter ? ` · ${reader.chapter}` : ""}
-          </span>
-        </div>
-        <div className="reader-tools">
-          <button
-            className={`reader-tool ${findOpen ? "is-active" : ""}`}
-            title="书内搜索"
-            onClick={() => {
-              setTocOpen(false);
-              setFindOpen((v) => !v);
-            }}
-            disabled={reader.status !== "ready"}
-          >
-            <SearchIcon size={16} />
+    <section
+      className={`reader-overlay theme-${settings.theme}${settings.zen ? " is-zen" : ""}${
+        spread ? " is-spread" : ""
+      }`}
+      aria-label="全屏阅读"
+    >
+      {settings.zen ? null : (
+        <header className="reader-top">
+          <button className="reader-back" onClick={onClose} title="回到书桌（Esc）">
+            <ArrowLeft size={16} />
+            <span>书桌</span>
           </button>
-          <button
-            className={`reader-tool ${tocOpen ? "is-active" : ""}`}
-            title="目录"
-            onClick={() => {
-              setFindOpen(false);
-              setTocOpen((v) => !v);
-            }}
-            disabled={reader.status !== "ready"}
-          >
-            <List size={16} />
-          </button>
-        </div>
-      </header>
+          <div className="reader-heading">
+            <span className="reader-title">{book.title}</span>
+            <span className="reader-sub">
+              {book.author || "未知作者"}
+              {displayChapter ? ` · ${displayChapter}` : ""}
+            </span>
+          </div>
+          <div className="reader-tools">
+            <button
+              className={`reader-tool ${settingsOpen ? "is-active" : ""}`}
+              title="阅读设置"
+              onClick={() => {
+                setFindOpen(false);
+                setTocOpen(false);
+                setSettingsOpen((v) => !v);
+              }}
+            >
+              <Type size={16} />
+            </button>
+            <button
+              className={`reader-tool ${findOpen ? "is-active" : ""}`}
+              title="书内搜索"
+              onClick={() => {
+                setSettingsOpen(false);
+                setTocOpen(false);
+                setFindOpen((v) => !v);
+              }}
+              disabled={reader.status !== "ready"}
+            >
+              <SearchIcon size={16} />
+            </button>
+            <button
+              className={`reader-tool ${tocOpen ? "is-active" : ""}`}
+              title="目录"
+              onClick={() => {
+                setSettingsOpen(false);
+                setFindOpen(false);
+                setTocOpen((v) => !v);
+              }}
+              disabled={reader.status !== "ready"}
+            >
+              <List size={16} />
+            </button>
+          </div>
+        </header>
+      )}
 
       <main className="reader-main">
-        <div className="reader-page">
+        <div className="reader-page" style={{ width: `min(${pageWidth}px, 100%)` }}>
           <div ref={hostRef} className="epub-viewport" />
           {reader.status === "loading" ? (
             <div className="reader-state">
@@ -155,7 +210,7 @@ export default function ReaderView({
           />
           {tocOpen ? (
             <TocPopover
-              toc={reader.toc}
+              toc={displayToc}
               onJump={(href) => {
                 setTocOpen(false);
                 reader.jumpTo(href);
@@ -234,38 +289,62 @@ export default function ReaderView({
         </div>
       </main>
 
-      <footer className="reader-foot">
-        <button
-          className="page-button"
-          title="上一页"
-          onClick={() => reader.turn("prev")}
-          disabled={reader.status !== "ready"}
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <div className="reader-progress">
-          <span>
-            {reader.page.total > 0
-              ? `${reader.page.index + 1} / ${reader.page.total} 章`
-              : "—"}
-          </span>
-          <div className="progress-track">
-            <div
-              className="progress-fill"
-              style={{ width: `${Math.round(reader.page.percent * 100)}%` }}
-            />
+      {settings.zen ? null : (
+        <footer className="reader-foot">
+          <button
+            className="page-button"
+            title="上一页"
+            onClick={() => reader.turn("prev")}
+            disabled={reader.status !== "ready"}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <div className="reader-progress">
+            <span>
+              {reader.page.total > 0
+                ? `${reader.page.index + 1} / ${reader.page.total} 章`
+                : "—"}
+            </span>
+            <div className="progress-track">
+              <div
+                className="progress-fill"
+                style={{ width: `${Math.round(reader.page.percent * 100)}%` }}
+              />
+            </div>
+            <span>{Math.round(reader.page.percent * 100)}%</span>
           </div>
-          <span>{Math.round(reader.page.percent * 100)}%</span>
+          <button
+            className="page-button"
+            title="下一页"
+            onClick={() => reader.turn("next")}
+            disabled={reader.status !== "ready"}
+          >
+            <ChevronRight size={16} />
+          </button>
+        </footer>
+      )}
+
+      {settings.zen ? (
+        <div className="reader-zen-bar">
+          <button
+            title="阅读设置"
+            onClick={() => setSettingsOpen((v) => !v)}
+            className={settingsOpen ? "is-active" : ""}
+          >
+            <Type size={14} />
+          </button>
+          <button onClick={() => onSettingsChange({ zen: false })}>退出禅意</button>
         </div>
-        <button
-          className="page-button"
-          title="下一页"
-          onClick={() => reader.turn("next")}
-          disabled={reader.status !== "ready"}
-        >
-          <ChevronRight size={16} />
-        </button>
-      </footer>
+      ) : null}
+
+      {settingsOpen ? (
+        <ReaderSettingsPanel
+          settings={settings}
+          bookTitle={book.title}
+          onChange={onSettingsChange}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
     </section>
   );
 }

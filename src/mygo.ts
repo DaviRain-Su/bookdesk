@@ -165,6 +165,21 @@ export interface ReaderModeEvent {
   mode: string;
 }
 
+/**
+ * ReadingSettings 是全屏阅读的外观设置，全局共用一份。
+ * 存进 settings 表，不新建数据库；书卡不读这份设置。
+ */
+export interface ReadingSettings {
+  theme: string;
+  fontSize: number;
+  lineHeight: number;
+  columnWidth: number;
+  vertical: boolean;
+  convert: string;
+  zen: boolean;
+  spread: boolean;
+}
+
 /** ReadingState 是启动时要恢复的阅读状态。 */
 export interface ReadingState {
   lastMode: string;
@@ -319,11 +334,17 @@ export const Reading = {
   getProgress(bookID: string): Promise<BookProgress | null> {
     return call("Reading.GetProgress", bookID);
   },
+  getSettings(): Promise<ReadingSettings> {
+    return call("Reading.GetSettings");
+  },
   getState(): Promise<ReadingState> {
     return call("Reading.GetState");
   },
   saveProgress(p: BookProgress): Promise<void> {
     return call("Reading.SaveProgress", p);
+  },
+  saveSettings(settings: ReadingSettings): Promise<void> {
+    return call("Reading.SaveSettings", settings);
   },
   setLastBook(bookID: string): Promise<void> {
     return call("Reading.SetLastBook", bookID);

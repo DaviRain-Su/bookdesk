@@ -15,6 +15,7 @@ const (
 	readingModeKey     = "reading.mode"
 	readingLastBookKey = "reading.last_book"
 	readingProgressKey = "reading.progress."
+	readingSettingsKey = "reading.settings"
 )
 
 // ReaderModeEvent 是菜单「显示 → 全屏阅读 / 书桌」发给前端的切换指令。
@@ -36,6 +37,67 @@ type BookProgress struct {
 	Percent    float64 `json:"percent"`
 	Chapter    string  `json:"chapter"`
 	UpdatedAt  int64   `json:"updatedAt"`
+}
+
+// ReadingSettings 是全屏阅读的外观设置，全局共用一份。
+// 存进 settings 表，不新建数据库；书卡不读这份设置。
+type ReadingSettings struct {
+	Theme       string  `json:"theme"`
+	FontSize    int64   `json:"fontSize"`
+	LineHeight  float64 `json:"lineHeight"`
+	ColumnWidth int64   `json:"columnWidth"`
+	Vertical    bool    `json:"vertical"`
+	Convert     string  `json:"convert"`
+	Zen         bool    `json:"zen"`
+	Spread      bool    `json:"spread"`
+}
+
+func defaultReadingSettings() ReadingSettings {
+	return ReadingSettings{
+		Theme:       "paper",
+		FontSize:    17,
+		LineHeight:  1.95,
+		ColumnWidth: 780,
+		Convert:     "none",
+	}
+}
+
+// normalizeReadingSettings 把坏数据挡在阅读器外面。
+// 零值当作「没填」落回默认值，其余越界值夹到可用范围。
+func normalizeReadingSettings(s ReadingSettings) ReadingSettings {
+	d := defaultReadingSettings()
+	switch s.Theme {
+	case "paper", "day", "night":
+	default:
+		s.Theme = d.Theme
+	}
+	if s.FontSize == 0 {
+		s.FontSize = d.FontSize
+	} else if s.FontSize < 14 {
+		s.FontSize = 14
+	} else if s.FontSize > 24 {
+		s.FontSize = 24
+	}
+	if s.LineHeight == 0 {
+		s.LineHeight = d.LineHeight
+	} else if s.LineHeight < 1.5 {
+		s.LineHeight = 1.5
+	} else if s.LineHeight > 2.4 {
+		s.LineHeight = 2.4
+	}
+	if s.ColumnWidth == 0 {
+		s.ColumnWidth = d.ColumnWidth
+	} else if s.ColumnWidth < 560 {
+		s.ColumnWidth = 560
+	} else if s.ColumnWidth > 1100 {
+		s.ColumnWidth = 1100
+	}
+	switch s.Convert {
+	case "none", "simplified", "traditional":
+	default:
+		s.Convert = d.Convert
+	}
+	return s
 }
 
 func (Reading) GetState(ctx context.Context) (ReadingState, error) {
@@ -70,6 +132,29 @@ func (Reading) SetLastBook(ctx context.Context, bookID string) error {
 		return deleteSetting(readingLastBookKey)
 	}
 	return setSetting(readingLastBookKey, bookID)
+}
+
+func (Reading) GetSettings(ctx context.Context) (ReadingSettings, error) {
+	settings := defaultReadingSettings()
+	raw, err := getSetting(readingSettingsKey)
+	if err != nil || raw == nil {
+		return settings, err
+	}
+	var saved ReadingSettings
+	if err := json.Unmarshal([]byte(*raw), &saved); err != nil {
+		// 旧版本或手改坏的设置回到默认，不挡住打开书。
+		return settings, nil
+	}
+	return normalizeReadingSettings(saved), nil
+}
+
+func (Reading) SaveSettings(ctx context.Context, settings ReadingSettings) error {
+	settings = normalizeReadingSettings(settings)
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return setSetting(readingSettingsKey, string(raw))
 }
 
 func (Reading) GetProgress(ctx context.Context, bookID string) (*BookProgress, error) {

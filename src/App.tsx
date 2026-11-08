@@ -12,9 +12,10 @@ import SettingsPanel from "./components/SettingsPanel";
 import LookupPanel, { type LookupRequest } from "./components/LookupPanel";
 import ReaderView, { type ReaderBook } from "./components/reader/ReaderView";
 import type { ReaderProgress } from "./components/reader/useEpubReader";
+import { DEFAULT_READER_SETTINGS } from "./components/reader/settings";
 import type { SearchHit } from "./lib/search";
 import type { Highlight } from "./types";
-import { Board, Library, Notes, Reading, events } from "./mygo";
+import { Board, Library, Notes, Reading, events, type ReadingSettings } from "./mygo";
 import { parseEdges, parseNodes, parseViewport } from "./lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "./lib/reveal";
 
@@ -64,7 +65,12 @@ export default function App() {
   } | null>(null);
   const [lastBookId, setLastBookId] = useState<string | null>(null);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
+  const [readerSettings, setReaderSettings] =
+    useState<ReadingSettings>(DEFAULT_READER_SETTINGS);
+  const [readerSettingsReady, setReaderSettingsReady] = useState(false);
   const readerProgressRef = useRef<ReaderProgress | null>(null);
+  const readerSettingsRef = useRef<ReadingSettings>(DEFAULT_READER_SETTINGS);
+  const settingsSaveTimer = useRef<number | null>(null);
   const openingReaderRef = useRef(false);
   const restoredReaderRef = useRef(false);
   const progressSaveTimers = useRef<Map<string, number>>(new Map());
@@ -119,6 +125,42 @@ export default function App() {
   useEffect(() => {
     void refreshHighlights();
   }, [refreshHighlights]);
+
+  // 阅读设置是全局的，启动时读一次；读不到就用默认值。
+  useEffect(() => {
+    let cancelled = false;
+    void Reading.getSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        readerSettingsRef.current = settings;
+        setReaderSettings(settings);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setReaderSettingsReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (settingsSaveTimer.current) window.clearTimeout(settingsSaveTimer.current);
+    };
+  }, []);
+
+  // 设置改动即时生效，写库稍微合并一下，避免连点字号时频繁落盘。
+  const updateReaderSettings = useCallback((patch: Partial<ReadingSettings>) => {
+    const next = { ...readerSettingsRef.current, ...patch };
+    readerSettingsRef.current = next;
+    setReaderSettings(next);
+    if (settingsSaveTimer.current) window.clearTimeout(settingsSaveTimer.current);
+    settingsSaveTimer.current = window.setTimeout(() => {
+      settingsSaveTimer.current = null;
+      void Reading.saveSettings(next).catch(() => {});
+    }, 200);
+  }, []);
 
   useEffect(() => {
     const onChanged = () => void refreshHighlights();
@@ -434,7 +476,7 @@ export default function App() {
   // 启动时恢复上次的模式；空画布、新用户和找不到的书都留在书桌。
   useEffect(() => {
     if (restoredReaderRef.current) return;
-    if (!board || !boardState || books.length === 0) return;
+    if (!board || !boardState || books.length === 0 || !readerSettingsReady) return;
     restoredReaderRef.current = true;
     void (async () => {
       try {
@@ -451,7 +493,7 @@ export default function App() {
         /* 状态读不到就留在书桌 */
       }
     })();
-  }, [board, boardState, books, openReader]);
+  }, [board, boardState, books, readerSettingsReady, openReader]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -721,9 +763,11 @@ export default function App() {
           <ReaderView
             key={`${reader.book.id}:${reader.initialCfi ?? "start"}`}
             book={reader.book}
+            settings={readerSettings}
             initialCfi={reader.initialCfi}
             initialSpineIndex={reader.initialSpineIndex}
             initialPercent={reader.initialPercent}
+            onSettingsChange={updateReaderSettings}
             onClose={closeReader}
             onProgress={handleReaderProgress}
           />

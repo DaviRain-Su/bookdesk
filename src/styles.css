@@ -850,9 +850,9 @@ button:disabled {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: var(--ink-3);
+  color: var(--reader-muted, var(--ink-3));
   font-size: 13px;
-  background: #fffefb;
+  background: var(--reader-paper, #fffefb);
 }
 
 .reader-state.is-error {
@@ -880,12 +880,55 @@ button:disabled {
 /* ---------- Fullscreen reader ---------- */
 
 .reader-overlay {
+  --reader-bg: #ece7db;
+  --reader-paper: #f7f1e3;
+  --reader-ink: #38332a;
+  --reader-muted: #7d7466;
+  --reader-border: #ded6c5;
+  --reader-chrome: rgba(247, 243, 234, 0.96);
+  --reader-hover: rgba(56, 51, 42, 0.06);
+  --reader-panel: rgba(252, 249, 242, 0.98);
   position: absolute;
   inset: 0;
   z-index: 15;
   display: flex;
   flex-direction: column;
-  background: #f3f1ea;
+  background: var(--reader-bg);
+  color: var(--reader-ink);
+}
+
+.reader-overlay.theme-day {
+  --reader-bg: #f1f1ee;
+  --reader-paper: #ffffff;
+  --reader-ink: #26241f;
+  --reader-muted: #6f6a60;
+  --reader-border: #e4e1d9;
+  --reader-chrome: rgba(252, 252, 250, 0.96);
+  --reader-hover: rgba(35, 34, 30, 0.06);
+  --reader-panel: rgba(255, 255, 255, 0.98);
+}
+
+.reader-overlay.theme-night {
+  color-scheme: dark;
+  --reader-bg: #0f1012;
+  --reader-paper: #17181a;
+  --reader-ink: #c9c6bf;
+  --reader-muted: #8f8a80;
+  --reader-border: #2a2b2e;
+  --reader-chrome: rgba(23, 24, 26, 0.96);
+  --reader-hover: rgba(255, 255, 255, 0.07);
+  --reader-panel: rgba(28, 29, 32, 0.98);
+  /* 目录、搜索浮层和按钮沿用全局变量，这里一起换成夜间色。 */
+  --ink: #e6e2d9;
+  --ink-2: #c9c6bf;
+  --ink-3: #8f8a80;
+  --border: #2a2b2e;
+  --border-strong: #3a3b3e;
+  --card: #1c1d20;
+  --bg-elevated: #1c1d20;
+  --accent: #8fb7a0;
+  --accent-soft: #24322b;
+  --highlight: #4a4330;
 }
 
 .reader-top {
@@ -894,9 +937,9 @@ button:disabled {
   align-items: center;
   gap: 16px;
   padding: 10px 18px;
-  background: rgba(252, 251, 248, 0.96);
+  background: var(--reader-chrome);
   backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--reader-border);
 }
 
 .reader-back {
@@ -906,14 +949,14 @@ button:disabled {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 8px;
-  color: var(--ink-2);
+  color: var(--reader-muted);
   font-size: 12.5px;
   transition: background 120ms ease, color 120ms ease;
 }
 
 .reader-back:hover {
-  background: rgba(35, 34, 30, 0.06);
-  color: var(--ink);
+  background: var(--reader-hover);
+  color: var(--reader-ink);
 }
 
 .reader-heading {
@@ -934,7 +977,7 @@ button:disabled {
 
 .reader-sub {
   font-size: 11.5px;
-  color: var(--ink-3);
+  color: var(--reader-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -952,13 +995,13 @@ button:disabled {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  color: var(--ink-3);
+  color: var(--reader-muted);
   transition: background 120ms ease, color 120ms ease;
 }
 
 .reader-tool:hover {
-  background: rgba(35, 34, 30, 0.06);
-  color: var(--ink);
+  background: var(--reader-hover);
+  color: var(--reader-ink);
 }
 
 .reader-tool.is-active {
@@ -979,10 +1022,29 @@ button:disabled {
   width: min(780px, 100%);
   height: 100%;
   overflow: hidden;
-  background: #fffefb;
-  border: 1px solid #eae6dc;
+  background: var(--reader-paper);
+  border: 1px solid var(--reader-border);
   border-radius: 6px;
   box-shadow: 0 10px 30px rgba(35, 34, 30, 0.08);
+}
+
+.reader-overlay.theme-night .reader-page {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.reader-overlay.is-spread .reader-main {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.reader-overlay.is-zen .reader-main {
+  padding: 0;
+}
+
+.reader-overlay.is-zen .reader-page {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .reader-foot {
@@ -991,8 +1053,8 @@ button:disabled {
   align-items: center;
   gap: 12px;
   padding: 8px 18px;
-  background: rgba(252, 251, 248, 0.96);
-  border-top: 1px solid var(--border);
+  background: var(--reader-chrome);
+  border-top: 1px solid var(--reader-border);
 }
 
 .reader-progress {
@@ -1001,8 +1063,309 @@ button:disabled {
   align-items: center;
   gap: 12px;
   font-size: 11.5px;
-  color: var(--ink-3);
+  color: var(--reader-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.reader-overlay .progress-track {
+  background: var(--reader-border);
+}
+
+.reader-overlay .progress-fill {
+  background: var(--reader-ink);
+}
+
+.reader-overlay .page-button {
+  color: var(--reader-muted);
+}
+
+.reader-overlay .page-button:hover {
+  background: var(--reader-hover);
+  color: var(--reader-ink);
+}
+
+/* 禅意模式：只留一条很淡的浮动按钮，鼠标放上去才清楚。 */
+.reader-zen-bar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 9px;
+  background: var(--reader-chrome);
+  border: 1px solid var(--reader-border);
+  box-shadow: 0 4px 16px rgba(35, 34, 30, 0.12);
+  opacity: 0.35;
+  transition: opacity 160ms ease;
+}
+
+.reader-zen-bar:hover {
+  opacity: 1;
+}
+
+.reader-zen-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 6px;
+  color: var(--reader-muted);
+  font-size: 12px;
+}
+
+.reader-zen-bar button:hover {
+  background: var(--reader-hover);
+  color: var(--reader-ink);
+}
+
+.reader-zen-bar button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---------- Reader settings panel ---------- */
+
+.reader-settings-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+}
+
+.reader-settings {
+  position: absolute;
+  top: 52px;
+  right: 18px;
+  z-index: 20;
+  width: 300px;
+  max-height: calc(100% - 80px);
+  display: flex;
+  flex-direction: column;
+  background: var(--reader-panel);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--reader-border);
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(35, 34, 30, 0.18);
+  color: var(--reader-ink);
+  overflow: hidden;
+}
+
+.reader-overlay.theme-night .reader-settings {
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.reader-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--reader-border);
+}
+
+.reader-settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.rs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+}
+
+.rs-label {
+  flex: 0 0 42px;
+  font-size: 12px;
+  color: var(--reader-muted);
+}
+
+.rs-themes {
+  display: flex;
+  gap: 6px;
+}
+
+.rs-theme {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 10.5px;
+  color: var(--reader-muted);
+}
+
+.rs-theme:hover {
+  background: var(--reader-hover);
+}
+
+.rs-theme.is-active {
+  border-color: var(--accent);
+  color: var(--reader-ink);
+}
+
+.rs-swatch {
+  width: 34px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  border: 1px solid var(--reader-border);
+  font-family: var(--font-read);
+  font-size: 12px;
+}
+
+.rs-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--reader-border);
+  border-radius: 8px;
+}
+
+.rs-stepper button {
+  width: 26px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--reader-muted);
+}
+
+.rs-stepper button:hover:not(:disabled) {
+  background: var(--reader-hover);
+  color: var(--reader-ink);
+}
+
+.rs-stepper button:disabled {
+  opacity: 0.35;
+}
+
+.rs-value {
+  min-width: 38px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rs-segment {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--reader-border);
+  border-radius: 8px;
+}
+
+.rs-segment button {
+  min-width: 44px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--reader-muted);
+}
+
+.rs-segment button:hover {
+  color: var(--reader-ink);
+}
+
+.rs-segment button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.rs-toggle {
+  width: 38px;
+  height: 22px;
+  padding: 2px;
+  border-radius: 11px;
+  background: var(--reader-border);
+  transition: background 140ms ease;
+}
+
+.rs-toggle span {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--reader-paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 140ms ease;
+}
+
+.rs-toggle.is-on {
+  background: var(--accent);
+}
+
+.rs-toggle.is-on span {
+  transform: translateX(16px);
+}
+
+.rs-toggle:disabled {
+  opacity: 0.4;
+}
+
+.rs-hint {
+  margin: 6px 0 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--reader-ink);
+}
+
+.rs-hint button {
+  margin-left: 6px;
+  color: var(--accent);
+  text-decoration: underline;
+  font-size: 11.5px;
+}
+
+.reader-settings-foot {
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--reader-border);
+}
+
+.rs-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--reader-muted);
+}
+
+.rs-reset:hover {
+  background: var(--reader-hover);
+  color: var(--reader-ink);
+}
+
+/* 夜间模式下，目录和搜索浮层原本是浅色的，这里跟着换掉。 */
+.reader-overlay.theme-night .toc-popover {
+  background: rgba(28, 29, 32, 0.97);
+}
+
+.reader-overlay.theme-night .toc-item:hover,
+.reader-overlay.theme-night .find-hit:hover,
+.reader-overlay.theme-night .ghost-icon:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.reader-overlay.theme-night .selection-popover,
+.reader-overlay.theme-night .hover-popover {
+  background: rgba(58, 58, 54, 0.96);
 }
 
 .ghost-icon.is-active {

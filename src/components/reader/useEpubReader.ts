@@ -5,9 +5,11 @@ import ePub, {
   type NavItem,
   type Rendition,
 } from "epubjs";
-import { Library, Notes } from "../../mygo";
+import { Library, Notes, type ReadingSettings } from "../../mygo";
 import { registerReadingContext } from "../../lib/reading";
+import { convertHan } from "../../lib/han";
 import { REVEAL_EVENT, type RevealTarget } from "../../lib/reveal";
+import { themeById, type ReaderTheme } from "./settings";
 
 export interface TocEntry {
   label: string;
@@ -49,6 +51,8 @@ export interface UseEpubReaderOptions {
   initialSpineIndex?: number;
   initialPercent?: number;
   initialReveal?: RevealTarget | null;
+  /** 只有全屏阅读传；书卡不传，保持原来的紧凑样式。 */
+  settings?: ReadingSettings;
   onProgress?: (progress: ReaderProgress) => void;
   onReady?: () => void;
 }
@@ -80,6 +84,57 @@ const SEARCH_HIGHLIGHT_STYLES = {
   "fill-opacity": "0.55",
   "mix-blend-mode": "multiply",
 };
+
+const THEME_STYLE_ID = "epubjs-inserted-css-default";
+
+/** 全屏阅读的主题样式；用 registerCss 整体替换，反复改字号也不会越堆越多。 */
+function readerThemeCss(settings: ReadingSettings, theme: ReaderTheme): string {
+  // 夜间模式把书自带的深色字也压成浅色，否则黑字会消失在黑底上。
+  const forceInk =
+    settings.theme === "night"
+      ? `html body p, html body div, html body span, html body li,
+         html body blockquote, html body td, html body th,
+         html body h1, html body h2, html body h3, html body h4,
+         html body h5, html body h6, html body em, html body strong,
+         html body b, html body i, html body small, html body figcaption {
+           color: ${theme.ink} !important;
+         }`
+      : "";
+  return `
+html, body {
+  background: ${theme.bg} !important;
+  color: ${theme.ink} !important;
+}
+body {
+  font-family: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", serif;
+  font-size: ${settings.fontSize}px !important;
+  line-height: ${settings.lineHeight} !important;
+  margin: 0;
+}
+p {
+  margin: 0;
+  margin-block-end: 0.9em;
+  text-indent: 2em;
+}
+h1, h2, h3 {
+  font-weight: 600;
+  line-height: 1.5;
+}
+::selection {
+  background: ${theme.selection};
+}
+.rc-highlight {
+  cursor: pointer;
+}
+a {
+  color: ${theme.link} !important;
+}
+img {
+  max-width: 100%;
+}
+${forceInk}
+`;
+}
 
 function locateText(nodes: Text[], index: number): { node: Text; offset: number } | null {
   let acc = 0;
@@ -201,6 +256,14 @@ export function useEpubReader(
   const revealRef = useRef<((target: RevealTarget) => void) | null>(null);
   const tempHighlightRef = useRef<string | null>(null);
   const clearSelectionRef = useRef<(() => void) | null>(null);
+  // latestSettingsRef 跟着每次渲染走；settingsRef 记录已经应用到书页上的那一份，
+  // 用来判断这次变化要不要重新分页。
+  const latestSettingsRef = useRef<ReadingSettings | null>(options.settings ?? null);
+  latestSettingsRef.current = options.settings ?? null;
+  const settingsRef = useRef<ReadingSettings | null>(options.settings ?? null);
+  const applySettingsRef = useRef<
+    ((next: ReadingSettings, opts?: { relayout?: boolean; force?: boolean }) => void) | null
+  >(null);
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -306,6 +369,8 @@ export function useEpubReader(
     let unregisterContext: (() => void) | null = null;
     let hoverTimer = 0;
     let lastHoverAt = 0;
+    let resizeFrame = 0;
+    let resizeObserver: ResizeObserver | null = null;
     const host = hostRef.current;
     if (!host) return;
 
@@ -378,6 +443,32 @@ export function useEpubReader(
       );
     };
 
+    // 字号/行距变了以后文字会重新排版，高亮 SVG 还停在旧位置，重挂一遍。
+    const refreshHighlights = () => {
+      const rendition = renditionRef.current;
+      if (!rendition) return;
+      for (const cfi of Array.from(highlightCfis.current.values())) {
+        try {
+          rendition.annotations.remove(cfi, "highlight");
+        } catch {
+          /* ignore */
+        }
+      }
+      for (const [id, cfi] of highlightCfis.current) {
+        try {
+          rendition.annotations.highlight(
+            cfi,
+            { id },
+            undefined,
+            "rc-highlight",
+            HIGHLIGHT_STYLES,
+          );
+        } catch {
+          /* 位置失效的旧划线忽略 */
+        }
+      }
+    };
+
     const saveHighlight = async (cfiRange: string, text: string): Promise<string | null> => {
       try {
         const saved = await Notes.saveHighlight({
@@ -417,6 +508,139 @@ export function useEpubReader(
     };
     clearSelectionRef.current = clearSelection;
 
+    const originalText = new WeakMap<Text, string>();
+
+    const applyWritingMode = (doc: Document, vertical: boolean) => {
+      const value = vertical ? "vertical-rl" : "horizontal-tb";
+      try {
+        doc.documentElement?.style.setProperty("writing-mode", value, "important");
+        doc.body?.style.setProperty("writing-mode", value, "important");
+        doc.documentElement?.style.setProperty("text-orientation", "mixed", "important");
+      } catch {
+        /* 结构不标准的书忽略 */
+      }
+    };
+
+    // epub.js 的 themes.inject 只认 rules / url，不认 registerCss 的
+    // serialized 样式；重建视图后主题会丢。章节进 iframe 之前先把样式
+    // 写进 head，字号和行距也能参与第一次分页。
+    const injectThemeStyle = (doc: Document, settings: ReadingSettings) => {
+      try {
+        const head = doc.head ?? doc.documentElement;
+        if (!head) return;
+        let style = doc.querySelector(`#${THEME_STYLE_ID}`) as HTMLStyleElement | null;
+        if (!style) {
+          style = doc.createElement("style") as HTMLStyleElement;
+          style.id = THEME_STYLE_ID;
+          head.appendChild(style);
+        }
+        style.textContent = readerThemeCss(settings, themeById(settings.theme));
+      } catch {
+        /* 结构不标准的书忽略 */
+      }
+    };
+
+    // 逐字转换，字符偏移不变，所以 CFI、划线和进度都不用改。
+    const convertDoc = (doc: Document, mode: string) => {
+      if (!doc.body) return;
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+      for (const node of nodes) {
+        const parent = node.parentElement;
+        if (!parent || /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA)$/.test(parent.tagName)) continue;
+        let original = originalText.get(node);
+        if (original === undefined) {
+          original = node.data;
+          originalText.set(node, original);
+        }
+        const next = convertHan(original, mode);
+        if (next !== node.data) node.data = next;
+      }
+    };
+
+    const applyConversionToContents = (mode: string) => {
+      const list = renditionRef.current?.getContents() as unknown as Contents[] | undefined;
+      list?.forEach((contents) => convertDoc(contents.document, mode));
+    };
+
+    // section.load 会缓存已经解析过的章节；不清掉的话，重新 display 同一章
+    // 不会再触发 spine 的 content hook，横竖排就换不过来。
+    const resetSectionCache = (cfi: string | null) => {
+      const book = bookRef.current;
+      if (!book || !cfi) return;
+      try {
+        const section = book.spine.get(cfi) as unknown as
+          | { contents?: unknown; document?: unknown }
+          | undefined;
+        if (section) {
+          section.contents = undefined;
+          section.document = undefined;
+        }
+      } catch {
+        /* CFI 失效时忽略 */
+      }
+    };
+
+    const applySettings = (
+      next: ReadingSettings,
+      opts?: { relayout?: boolean; force?: boolean },
+    ) => {
+      const rendition = renditionRef.current;
+      if (!rendition) return;
+      const previous = settingsRef.current;
+      settingsRef.current = next;
+      rendition.themes.registerCss("default", readerThemeCss(next, themeById(next.theme)));
+
+      const contents = rendition.getContents() as unknown as Contents[];
+      contents.forEach((item) => applyWritingMode(item.document, next.vertical));
+      applyConversionToContents(next.convert);
+
+      if (!opts?.relayout) return;
+      const verticalChanged = previous?.vertical !== next.vertical;
+      const spreadChanged = previous?.spread !== next.spread;
+      const layoutChanged =
+        verticalChanged ||
+        spreadChanged ||
+        previous?.fontSize !== next.fontSize ||
+        previous?.lineHeight !== next.lineHeight;
+      if (!layoutChanged && !opts.force) return;
+
+      if (verticalChanged || spreadChanged) {
+        rendition.spread(next.spread && !next.vertical ? "auto" : "none", 700);
+      }
+
+      const cfi = lastCfi.current;
+      if (verticalChanged) {
+        // 竖排要换分页轴，重建当前视图，让新的 writing-mode 参与第一次分页。
+        resetSectionCache(cfi);
+        rendition.clear();
+        const shown = cfi ? rendition.display(cfi) : rendition.display();
+        void shown.then(() => {
+          // 新视图的样式在 spine hook 里已经写好；这里再同步一次，
+          // 防止某本书的结构让 hook 没跑到，顺便把高亮按新排版重挂。
+          const current = settingsRef.current;
+          if (current) {
+            rendition.themes.registerCss(
+              "default",
+              readerThemeCss(current, themeById(current.theme)),
+            );
+          }
+          refreshHighlights();
+        });
+        return;
+      }
+      const manager = (rendition as unknown as { manager?: { updateLayout?: () => void } })
+        .manager;
+      manager?.updateLayout?.();
+      if (cfi) {
+        void rendition.display(cfi).then(() => refreshHighlights());
+      } else {
+        refreshHighlights();
+      }
+    };
+    applySettingsRef.current = applySettings;
+
     (async () => {
       try {
         // 走 books:// 自定义协议，由 Go 后端直接回文件；不再把整本书 base64 搬进前端。
@@ -437,6 +661,11 @@ export function useEpubReader(
         }).hooks;
         spineHooks?.content?.register((doc: Document) => {
           try {
+            // 在 epub.js 第一次分页之前就写好横竖排和主题，让它按正确的
+            // 轴、字号和行距排版。
+            const current = latestSettingsRef.current;
+            applyWritingMode(doc, current?.vertical ?? false);
+            if (current) injectThemeStyle(doc, current);
             const head = doc.head ?? doc.documentElement;
             if (!head) return;
             const meta = doc.createElement("meta");
@@ -460,6 +689,24 @@ export function useEpubReader(
           allowScriptedContent: true,
         });
         renditionRef.current = rendition;
+
+        // 栏宽、双页和禅意模式都会改 .reader-page 的宽度；epub.js 只监听窗口
+        // resize，所以这里盯住容器，宽度一变就重新分页并留在原来的 CFI。
+        resizeObserver = new ResizeObserver(() => {
+          if (resizeFrame) return;
+          resizeFrame = window.requestAnimationFrame(() => {
+            resizeFrame = 0;
+            try {
+              const current = renditionRef.current as unknown as
+                | { resize: () => void }
+                | null;
+              current?.resize();
+            } catch {
+              /* 书还没渲染完时忽略 */
+            }
+          });
+        });
+        resizeObserver.observe(host);
 
         // 取当前这一页能看到的文字。取不到就返回空，宁可少发给模型。
         const visiblePageText = (): string => {
@@ -495,18 +742,32 @@ export function useEpubReader(
           visibleText: visiblePageText(),
         }));
 
-        rendition.themes.default({
-          "html, body": { background: "#fffefb" },
-          body: {
-            "font-family": '"Songti SC", "STSong", "Noto Serif SC", serif',
-            "line-height": "1.95",
-            color: "#33312b",
-          },
-          p: { margin: "0 0 0.9em", "text-indent": "2em" },
-          "h1, h2, h3": { "font-weight": "600", "line-height": "1.5" },
-          "::selection": { background: "#ffe9a3" },
-          ".rc-highlight": { cursor: "pointer" },
-        });
+        const initialSettings = latestSettingsRef.current;
+        if (initialSettings) {
+          settingsRef.current = initialSettings;
+          rendition.themes.registerCss(
+            "default",
+            readerThemeCss(initialSettings, themeById(initialSettings.theme)),
+          );
+          rendition.spread(
+            initialSettings.spread && !initialSettings.vertical ? "auto" : "none",
+            700,
+          );
+        } else {
+          // 书卡不传设置，保持原来的紧凑样式。
+          rendition.themes.default({
+            "html, body": { background: "#fffefb" },
+            body: {
+              "font-family": '"Songti SC", "STSong", "Noto Serif SC", serif',
+              "line-height": "1.95",
+              color: "#33312b",
+            },
+            p: { margin: "0 0 0.9em", "text-indent": "2em" },
+            "h1, h2, h3": { "font-weight": "600", "line-height": "1.5" },
+            "::selection": { background: "#ffe9a3" },
+            ".rc-highlight": { cursor: "pointer" },
+          });
+        }
 
         const total = bookSize(book);
         setPage((p) => ({ ...p, total }));
@@ -683,6 +944,7 @@ export function useEpubReader(
           if (!contents || !doc || boundDocs.has(doc)) return;
           boundDocs.add(doc);
           contentsByDoc.set(doc, contents);
+          convertDoc(doc, latestSettingsRef.current?.convert ?? "none");
           doc.addEventListener("mousemove", onHoverMove);
           doc.addEventListener("mouseleave", onHoverLeave);
           doc.addEventListener("click", onContentClick);
@@ -756,6 +1018,11 @@ export function useEpubReader(
 
         setStatus("ready");
         onReadyRef.current?.();
+        if (settingsRef.current) {
+          // 主题样式是在首次分页之后才注入 iframe 的，这里再排一次，
+          // 保证字号、行距和横竖排从一开始就生效。
+          applySettings(settingsRef.current, { relayout: true, force: true });
+        }
 
         const reveal = async (target: RevealTarget) => {
           const current = renditionRef.current;
@@ -781,7 +1048,8 @@ export function useEpubReader(
           await new Promise((resolve) => window.setTimeout(resolve, 160));
           const contents = (current.getContents() as unknown as Contents[])[0];
           if (!contents) return;
-          const range = findOccurrenceRange(contents.document, target.query, target.occurrence);
+          const query = convertHan(target.query, latestSettingsRef.current?.convert ?? "none");
+          const range = findOccurrenceRange(contents.document, query, target.occurrence);
           if (!range) return;
           let cfi = "";
           try {
@@ -932,7 +1200,11 @@ export function useEpubReader(
       tempHighlightRef.current = null;
       selectionRangeRef.current = null;
       clearSelectionRef.current = null;
+      applySettingsRef.current = null;
       unregisterContext?.();
+      resizeObserver?.disconnect();
+      resizeObserver = null;
+      if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
       if (hoverTimer) window.clearTimeout(hoverTimer);
       try {
         renditionRef.current?.destroy();
@@ -950,6 +1222,14 @@ export function useEpubReader(
     // 只按书切换引擎；回调通过 ref 读取，避免每次渲染重开书。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);
+
+  // 设置变化只改样式和分页，不重开书。
+  const settingsKey = options.settings ? JSON.stringify(options.settings) : "";
+  useEffect(() => {
+    if (!options.settings) return;
+    applySettingsRef.current?.(options.settings, { relayout: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsKey]);
 
   const turn = useCallback((dir: "prev" | "next") => {
     const rendition = renditionRef.current;
