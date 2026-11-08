@@ -317,7 +317,7 @@ export default function SettingsPanel({ open, onClose }: Props) {
                   onChange={(event) => setKeyInput(event.target.value)}
                 />
                 <p className="settings-hint">
-                  Key 用 myzig 的 Secrets 存进 macOS 钥匙串，不写进数据库，也不进仓库。
+                  Key 用 mygo 的 Secrets 存进 macOS 钥匙串，不写进数据库，也不进仓库。
                 </p>
                 {hasKey ? (
                   <button className="text-button is-danger-text" onClick={() => void clearKey()} disabled={busy}>

@@ -8,5 +8,13 @@
   "devCommand": "bun run dev:web",
   "buildCommand": "bun run build:web",
   "frontendDist": "dist",
-  "out": "build"
+  "out": "build",
+  "fileAssociations": [
+    {
+      "ext": ["epub"],
+      "name": "EPUB 电子书",
+      "mimeType": "application/epub+zip",
+      "role": "Viewer"
+    }
+  ]
 }

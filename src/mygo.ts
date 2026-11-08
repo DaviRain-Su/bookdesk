@@ -2,133 +2,340 @@
 
 import { call, event } from "mygo-runtime";
 
+// ---- Types ----
+
+/** AcpUpdate 是外部 Agent 的流式输出，按 turnId 对应到前端那一次提问。 */
+export interface AcpUpdate {
+  turnId: string;
+  kind: string;
+  text: string;
+}
+
+/** AgentCandidate 是设置页里可以点选的已知 ACP Agent。 */
+export interface AgentCandidate {
+  id: string;
+  name: string;
+  command: string;
+  state: string;
+  detail: string;
+}
+
+export interface AgentTest {
+  ok: boolean;
+  name: string;
+  message: string;
+}
+
+export interface AiStatus {
+  hasKey: boolean;
+  model: string;
+  baseUrl: string;
+  engine: string;
+  agentCommand: string;
+  agentRunning: boolean;
+  agentName: string;
+}
+
+/** BoardData 是一块画布的完整状态；画布服务叫 Board，两个名字不能撞。 */
+export interface BoardData {
+  id: string;
+  name: string;
+  viewportJson: string;
+  nodesJson: string;
+  edgesJson: string;
+  updatedAt: number;
+}
+
+export interface BoardSummary {
+  id: string;
+  name: string;
+  updatedAt: number;
+}
+
+export interface Book {
+  id: string;
+  title: string;
+  author: string | null;
+  language: string | null;
+  coverRelPath: string | null;
+  epubRelPath: string;
+  importedAt: number;
+}
+
+export interface BookLocation {
+  bookId: string;
+  cfi: string | null;
+  spineIndex: number;
+  href: string | null;
+  pageLabel: string | null;
+  charOffset: number | null;
+}
+
+export interface Card {
+  id: string;
+  type: string;
+  title: string | null;
+  body: string | null;
+  quote: string | null;
+  quoteLocation: BookLocation | null;
+  imageRelPath: string | null;
+  sourceBookId: string | null;
+  characterName: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChapterText {
+  spineIndex: number;
+  href: string | null;
+  text: string;
+}
+
+export interface Character {
+  id: string;
+  bookId: string;
+  name: string;
+  description: string | null;
+  imageRelPath: string | null;
+  createdAt: number;
+}
+
+export interface ChatInput {
+  bookId: string;
+  bookTitle: string;
+  characterName: string;
+  characterDescription: string | null;
+  question: string;
+  visibleText: string;
+  chapterTitle: string | null;
+  currentSpineIndex: number;
+  allowFuture: boolean;
+  turnId: string;
+  sessionKey: string;
+}
+
+export interface ChatReply {
+  ok: boolean;
+  text: string;
+  message: string;
+}
+
+export interface Highlight {
+  id: string;
+  bookId: string;
+  location: BookLocation;
+  text: string;
+  color: string;
+  createdAt: number;
+}
+
+export interface ImportError {
+  path: string;
+  message: string;
+}
+
+export interface ImportProgress {
+  done: number;
+  total: number;
+  title: string;
+}
+
+export interface ImportResult {
+  books: Book[];
+  errors: ImportError[];
+}
+
+/** OpenFileEvent 把 Finder 双击打开的文件交给前端导入。 */
+export interface OpenFileEvent {
+  path: string;
+}
+
+export interface SaveCardInput {
+  id: string | null;
+  type: string;
+  title: string | null;
+  body: string | null;
+  quote: string | null;
+  quoteLocation: BookLocation | null;
+  imageRelPath: string | null;
+  sourceBookId: string | null;
+  characterName: string | null;
+}
+
+export interface SaveCharacterInput {
+  id: string | null;
+  bookId: string;
+  name: string;
+  description: string | null;
+  imageRelPath: string | null;
+}
+
+export interface SaveHighlightInput {
+  id: string | null;
+  bookId: string;
+  location: BookLocation;
+  text: string;
+  color: string | null;
+}
+
+export interface SearchHit {
+  bookId: string;
+  title: string;
+  location: BookLocation;
+  snippet: string;
+  highlights: number[][];
+}
+
+export interface WordLookupInput {
+  word: string;
+  sentence: string | null;
+  bookTitle: string | null;
+  turnId: string;
+}
+
+// ---- Services ----
+
+/** Library 负责导入、读取和 books:// 协议。 */
 export const Library = {
-  pickAndImport(): Promise<{ books: ({ id: string; title: string; author: string | null; language: string | null; coverRelPath: string | null; epubRelPath: string; importedAt: number })[]; errors: ({ path: string; message: string })[] }> {
-    return call("Library.pickAndImport");
+  chapterText(bookID: string, spineIndex: number): Promise<ChapterText | null> {
+    return call("Library.ChapterText", bookID, spineIndex);
   },
-  importPaths(arg0: (string)[]): Promise<{ books: ({ id: string; title: string; author: string | null; language: string | null; coverRelPath: string | null; epubRelPath: string; importedAt: number })[]; errors: ({ path: string; message: string })[] }> {
-    return call("Library.importPaths", arg0);
+  coverURL(bookID: string): Promise<string> {
+    return call("Library.CoverURL", bookID);
   },
-  list(): Promise<({ id: string; title: string; author: string | null; language: string | null; coverRelPath: string | null; epubRelPath: string; importedAt: number })[]> {
-    return call("Library.list");
+  epubBase64(bookID: string): Promise<string> {
+    return call("Library.EpubBase64", bookID);
   },
-  chapterText(arg0: string, arg1: number): Promise<{ spineIndex: number; href: string | null; text: string } | null> {
-    return call("Library.chapterText", arg0, arg1);
+  epubURL(bookID: string): Promise<string> {
+    return call("Library.EpubURL", bookID);
   },
-  epubURL(arg0: string): Promise<string> {
-    return call("Library.epubURL", arg0);
+  importPaths(paths: string[]): Promise<ImportResult> {
+    return call("Library.ImportPaths", paths);
   },
-  epubBase64(arg0: string): Promise<string> {
-    return call("Library.epubBase64", arg0);
+  list(): Promise<Book[]> {
+    return call("Library.List");
   },
-  coverURL(arg0: string): Promise<string> {
-    return call("Library.coverURL", arg0);
+  pickAndImport(): Promise<ImportResult> {
+    return call("Library.PickAndImport");
   },
   pickImage(): Promise<string> {
-    return call("Library.pickImage");
+    return call("Library.PickImage");
   },
 } as const;
 
+/** Notes 负责划线与卡片。 */
 export const Notes = {
-  saveHighlight(arg0: { id: string | null; bookId: string; location: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null }; text: string; color: string | null }): Promise<{ id: string; bookId: string; location: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null }; text: string; color: string; createdAt: number }> {
-    return call("Notes.saveHighlight", arg0);
+  deleteCard(id: string): Promise<void> {
+    return call("Notes.DeleteCard", id);
   },
-  listHighlights(arg0: string | null): Promise<({ id: string; bookId: string; location: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null }; text: string; color: string; createdAt: number })[]> {
-    return call("Notes.listHighlights", arg0);
+  deleteHighlight(id: string): Promise<void> {
+    return call("Notes.DeleteHighlight", id);
   },
-  deleteHighlight(arg0: string): Promise<void> {
-    return call("Notes.deleteHighlight", arg0);
+  listCards(): Promise<Card[]> {
+    return call("Notes.ListCards");
   },
-  saveCard(arg0: { id: string | null; type: string; title: string | null; body: string | null; quote: string | null; quoteLocation: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null } | null; imageRelPath: string | null; sourceBookId: string | null; characterName: string | null }): Promise<{ id: string; type: string; title: string | null; body: string | null; quote: string | null; quoteLocation: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null } | null; imageRelPath: string | null; sourceBookId: string | null; characterName: string | null; createdAt: number; updatedAt: number }> {
-    return call("Notes.saveCard", arg0);
+  listHighlights(bookID: string | null): Promise<Highlight[]> {
+    return call("Notes.ListHighlights", bookID);
   },
-  listCards(): Promise<({ id: string; type: string; title: string | null; body: string | null; quote: string | null; quoteLocation: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null } | null; imageRelPath: string | null; sourceBookId: string | null; characterName: string | null; createdAt: number; updatedAt: number })[]> {
-    return call("Notes.listCards");
+  saveCard(input: SaveCardInput): Promise<Card> {
+    return call("Notes.SaveCard", input);
   },
-  deleteCard(arg0: string): Promise<void> {
-    return call("Notes.deleteCard", arg0);
+  saveHighlight(input: SaveHighlightInput): Promise<Highlight> {
+    return call("Notes.SaveHighlight", input);
   },
 } as const;
 
+/** Board 是画布服务；一块画布的数据类型叫 BoardData。 */
 export const Board = {
-  load(arg0: string): Promise<{ id: string; name: string; viewportJson: string; nodesJson: string; edgesJson: string; updatedAt: number } | null> {
-    return call("Board.load", arg0);
+  create(name: string): Promise<BoardData> {
+    return call("Board.Create", name);
   },
-  save(arg0: { id: string; name: string; viewportJson: string; nodesJson: string; edgesJson: string; updatedAt: number }): Promise<void> {
-    return call("Board.save", arg0);
+  delete(id: string): Promise<void> {
+    return call("Board.Delete", id);
   },
-  list(): Promise<({ id: string; name: string; updatedAt: number })[]> {
-    return call("Board.list");
+  list(): Promise<BoardSummary[]> {
+    return call("Board.List");
   },
-  create(arg0: string): Promise<{ id: string; name: string; viewportJson: string; nodesJson: string; edgesJson: string; updatedAt: number }> {
-    return call("Board.create", arg0);
+  load(id: string): Promise<BoardData | null> {
+    return call("Board.Load", id);
   },
-  rename(arg0: string, arg1: string): Promise<{ id: string; name: string; updatedAt: number }> {
-    return call("Board.rename", arg0, arg1);
+  rename(id: string, name: string): Promise<BoardSummary> {
+    return call("Board.Rename", id, name);
   },
-  delete(arg0: string): Promise<void> {
-    return call("Board.delete", arg0);
+  save(board: BoardData): Promise<void> {
+    return call("Board.Save", board);
   },
 } as const;
 
+/** Search 是跨书 / 书内搜索。 */
 export const Search = {
-  query(arg0: string): Promise<({ bookId: string; title: string; location: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null }; snippet: string; highlights: ((number)[])[] })[]> {
-    return call("Search.query", arg0);
+  query(q: string): Promise<SearchHit[]> {
+    return call("Search.Query", q);
   },
-  queryBook(arg0: string, arg1: string): Promise<({ bookId: string; title: string; location: { bookId: string; cfi: string | null; spineIndex: number; href: string | null; pageLabel: string | null; charOffset: number | null }; snippet: string; highlights: ((number)[])[] })[]> {
-    return call("Search.queryBook", arg0, arg1);
+  queryBook(bookID: string, q: string): Promise<SearchHit[]> {
+    return call("Search.QueryBook", bookID, q);
   },
 } as const;
 
+/** Characters 负责人物卡。 */
 export const Characters = {
-  save(arg0: { id: string | null; bookId: string; name: string; description: string | null; imageRelPath: string | null }): Promise<{ id: string; bookId: string; name: string; description: string | null; imageRelPath: string | null; createdAt: number }> {
-    return call("Characters.save", arg0);
+  delete(id: string): Promise<void> {
+    return call("Characters.Delete", id);
   },
-  list(arg0: string | null): Promise<({ id: string; bookId: string; name: string; description: string | null; imageRelPath: string | null; createdAt: number })[]> {
-    return call("Characters.list", arg0);
+  list(bookID: string | null): Promise<Character[]> {
+    return call("Characters.List", bookID);
   },
-  delete(arg0: string): Promise<void> {
-    return call("Characters.delete", arg0);
+  save(input: SaveCharacterInput): Promise<Character> {
+    return call("Characters.Save", input);
   },
 } as const;
 
+/** Ai 是服务类型。 */
 export const Ai = {
-  status(): Promise<{ hasKey: boolean; model: string; baseUrl: string; engine: string; agentCommand: string; agentRunning: boolean; agentName: string }> {
-    return call("Ai.status");
+  cancel(turnID: string): Promise<void> {
+    return call("Ai.Cancel", turnID);
   },
-  setKey(arg0: string): Promise<void> {
-    return call("Ai.setKey", arg0);
+  chat(input: ChatInput): Promise<ChatReply> {
+    return call("Ai.Chat", input);
   },
   clearKey(): Promise<void> {
-    return call("Ai.clearKey");
+    return call("Ai.ClearKey");
   },
-  setConfig(arg0: string, arg1: string, arg2: string, arg3: string): Promise<void> {
-    return call("Ai.setConfig", arg0, arg1, arg2, arg3);
+  /** DetectAgents 是设置页的 Agent 列表：检测本机装了哪些已知 ACP Agent。 */
+  detectAgents(): Promise<AgentCandidate[]> {
+    return call("Ai.DetectAgents");
   },
-  chat(arg0: { bookId: string; bookTitle: string; characterName: string; characterDescription: string | null; question: string; visibleText: string; chapterTitle: string | null; currentSpineIndex: number; allowFuture: boolean; turnId: string; sessionKey: string }): Promise<{ ok: boolean; text: string; message: string }> {
-    return call("Ai.chat", arg0);
+  /** ForgetSession 清除某个角色（会话键）的对话记忆。 */
+  forgetSession(sessionKey: string): Promise<void> {
+    return call("Ai.ForgetSession", sessionKey);
   },
-  lookupWord(arg0: { word: string; sentence: string | null; bookTitle: string | null; turnId: string }): Promise<{ ok: boolean; text: string; message: string }> {
-    return call("Ai.lookupWord", arg0);
+  lookupWord(input: WordLookupInput): Promise<ChatReply> {
+    return call("Ai.LookupWord", input);
   },
-  testAgent(): Promise<{ ok: boolean; name: string; message: string }> {
-    return call("Ai.testAgent");
+  setConfig(model: string, baseURL: string, engine: string, agentCommand: string): Promise<void> {
+    return call("Ai.SetConfig", model, baseURL, engine, agentCommand);
   },
-  detectAgents(): Promise<({ id: string; name: string; command: string; state: string; detail: string })[]> {
-    return call("Ai.detectAgents");
+  setKey(key: string): Promise<void> {
+    return call("Ai.SetKey", key);
+  },
+  status(): Promise<AiStatus> {
+    return call("Ai.Status");
   },
   stopAgent(): Promise<void> {
-    return call("Ai.stopAgent");
+    return call("Ai.StopAgent");
   },
-  cancel(arg0: string): Promise<void> {
-    return call("Ai.cancel", arg0);
-  },
-  forgetSession(arg0: string): Promise<void> {
-    return call("Ai.forgetSession", arg0);
+  /** TestAgent 是设置页的「检测」：按当前设置确认 Agent 能启动。 */
+  testAgent(): Promise<AgentTest> {
+    return call("Ai.TestAgent");
   },
 } as const;
 
+// ---- Events ----
+
+/** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
-  "library:import-progress": event<{ done: number; total: number; title: string }>("library:import-progress"),
-  "acp:update": event<{ turnId: string; kind: string; text: string }>("acp:update"),
+  libraryImportProgress: event<ImportProgress>("library:import-progress"),
+  acpUpdate: event<AcpUpdate>("acp:update"),
+  appOpenFile: event<OpenFileEvent>("app:open-file"),
+  appAddBook: event<{}>("app:add-book"),
 } as const;

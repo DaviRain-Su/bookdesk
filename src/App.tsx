@@ -238,7 +238,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    const stop = events["library:import-progress"].on((payload) => {
+    const stop = events.libraryImportProgress.on((payload) => {
       setImporting(payload);
       if (payload.total > 0 && payload.done >= payload.total) {
         window.setTimeout(() => setImporting(null), 900);
@@ -379,6 +379,14 @@ export default function App() {
   useEffect(() => {
     const stop = appEvent("app:add-book").on(() => {
       void runImport();
+    });
+    return stop;
+  }, [runImport]);
+
+  // Finder 里双击 .epub（或把文件拖到程序图标上）时，由 Go 侧转成这个事件。
+  useEffect(() => {
+    const stop = events.appOpenFile.on((payload) => {
+      if (payload.path) void runImport([payload.path]);
     });
     return stop;
   }, [runImport]);

@@ -4,8 +4,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "zig build && go run github.com/egoist/mygo/cmd/mygo dev .",
-    "build": "zig build -Doptimize=ReleaseSmall && go run github.com/egoist/mygo/cmd/mygo build -skip-dmg .",
+    "dev": "go run github.com/egoist/mygo/cmd/mygo dev .",
+    "build": "go run github.com/egoist/mygo/cmd/mygo build -skip-dmg .",
     "generate": "go run github.com/egoist/mygo/cmd/mygo generate .",
     "dev:web": "vite",
     "build:web": "tsc --noEmit && vite build",

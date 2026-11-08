@@ -6,25 +6,18 @@
 
 ## 技术构成
 
-- **桌面壳**：myzig（Zig 宿主 + 系统 WKWebView）。不使用 Electron、Tauri，也不额外嵌入 Chromium。
+- **桌面壳**：上游 [mygo](https://github.com/egoist/mygo)（Go 宿主 + 系统 WKWebView）。不使用 Electron、Tauri，也不额外嵌入 Chromium。
 - **前端**：React + Vite，画布用 `@xyflow/react`，阅读用 `epub.js`。
-- **数据**：Zig 服务 + SQLite。书文件、元数据、划线、卡片、画布布局都在本地，不使用网页 IndexedDB，也不依赖联网后端。跨书搜索用 FTS5：中文按单字 + 二元组建索引，英文按词。
+- **数据**：Go 服务 + SQLite（mygo 的 sqlite 插件，FTS5 已编进原生库）。书文件、元数据、划线、卡片、画布布局都在本地，不使用网页 IndexedDB，也不依赖联网后端。跨书搜索用 FTS5：中文按单字 + 二元组建索引，英文按词。
 - **AI**：角色对话和查词交给本机已安装的 Agent：Pi、Codex 直接驱动它们自己的 CLI（原生协议），其他 Agent 走 ACP（Agent Client Protocol）；不装 Agent 时可以退回内置的 Anthropic API。
 
 ## 环境要求
 
 - macOS（Apple Silicon 或 Intel）
-- [Zig](https://ziglang.org/) 0.17.1
-- Go 1.27 及以上
+- Go 1.24 及以上
 - [Bun](https://bun.sh/)
-- myzig 框架的本地 clone（`egoist/mygo` 的 fork），默认放在本仓库旁边的 `../mygo`。
 
-本仓库通过 `go.mod` 的 `replace` 和 `build.zig` 的 SDK 路径指向该 clone。若 clone 放在别处，需要同时修改这两处：
-
-- `go.mod`：`replace github.com/egoist/mygo => ../mygo`
-- `build.zig`：`root_source_file = b.path("../mygo/zig/sdk/mygo.zig")`
-
-菜单需要 mygo 的「空 submenu 视为无 submenu」修复（commit `d3159399`，含 `menu_json_test.go`）；更早的 mygo 版本里，原生菜单项点击不会触发回调。
+后端直接用上游 `github.com/egoist/mygo`，不再需要 Zig，也不需要本地 fork 或 `replace`。SQLite 原生库由 mygo 在 `dev` / `build` 时按插件的 `mygo-plugin.json` 自动下载并打包，不用手动装。
 
 ## 安装与启动
 
@@ -33,7 +26,7 @@ bun install
 bun run dev
 ```
 
-`bun run dev` 会先 `zig build` 编译 Zig 动态库，再由 mygo 启动 Vite 开发服务器和开发版 `.app`。只调前端时可以 `bun run dev:web` 单独起 Vite。
+`bun run dev` 由 mygo 编译 Go 后端、启动 Vite 开发服务器和开发版 `.app`，改 `.go` 文件会自动重编重启。只调前端时可以 `bun run dev:web` 单独起 Vite。
 
 ## 打包
 
@@ -41,7 +34,7 @@ bun run dev
 bun run build
 ```
 
-等价于 `zig build -Doptimize=ReleaseSmall && mygo build -skip-dmg .`，产物是 `build/` 下的 `.app`（开发用，未签名分发）。
+等价于 `go run github.com/egoist/mygo/cmd/mygo build -skip-dmg .`，产物是 `build/` 下的 `.app`（开发用，未签名分发）。
 
 ## 数据目录
 
@@ -55,7 +48,7 @@ bun run build
 
 旧版本（「阅读白板」）的数据目录和 `reading-canvas.db` 会在第一次启动时自动搬到新位置，书和笔记不会丢。
 
-API Key 不在这个目录里：它由 myzig 的 `Secrets` 存进 macOS 钥匙串。
+API Key 不在这个目录里：它由 mygo 的 `Secrets` 存进 macOS 钥匙串。
 
 导入时会把 EPUB 复制进数据目录，原文件移动或删除不影响阅读。
 
@@ -71,7 +64,7 @@ rm -rf ~/Library/Application\ Support/书桌
 
 ## 功能
 
-- 导入 EPUB：顶栏按钮、把 `.epub` 拖进窗口，或 File 菜单「添加书籍…」（⌘O）。
+- 导入 EPUB：顶栏按钮、把 `.epub` 拖进窗口、File 菜单「添加书籍…」（⌘O），或在 Finder 里双击 `.epub`（应用注册了 EPUB 文件关联）。
 - 无限画布：多本书并排、自由缩放平移，文字卡、图片卡、卡片间连线。
 - 多画布：顶栏点画布名字切换。可以新建、重命名、删除；每块画布有自己的节点、连线和视口，互不影响。
 - 阅读与划线：在书页里划选文字，生成高亮与引用卡；点击已有划线可以生成卡片或删除。
@@ -133,7 +126,7 @@ MIT，见 [LICENSE](LICENSE)。
 - 只导入你自己拥有的 EPUB：你购买的、你有权使用的、公版书，或你自己生成的学习材料。
 - 不破解 DRM，不下载盗版，也不拆微信读书、Kindle 等封闭客户端里的书。带 DRM 的书会明确提示不支持。
 - 所有数据留在本机：不联网、不上传，也没有账号或云同步。仓库里不包含任何 `.epub`。
-- AI 是可选功能，只有你主动提问时才会把上面说的那部分文字发给你配置的 Agent 或模型服务。内置 API 的 Key 存在 myzig 的 `Secrets`（Keychain），不写进仓库或明文配置文件；外部 Agent 的 Key 由 Agent 自己管理。
+- AI 是可选功能，只有你主动提问时才会把上面说的那部分文字发给你配置的 Agent 或模型服务。内置 API 的 Key 存在 mygo 的 `Secrets`（Keychain），不写进仓库或明文配置文件；外部 Agent 的 Key 由 Agent 自己管理。
 - 外部 Agent 以子进程运行，应用只给它一个空的工作目录。Pi / Codex 以无工具、只读沙箱模式启动；ACP Agent 不声明文件、终端和 MCP 能力，权限请求一律拒绝。
 
 ## 已知限制

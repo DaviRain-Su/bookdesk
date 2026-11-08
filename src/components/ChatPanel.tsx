@@ -61,7 +61,7 @@ export default function ChatPanel({ target, onClose }: Props) {
   }, [messages, sending, streamText]);
 
   useEffect(() => {
-    const stop = events["acp:update"].on((payload) => {
+    const stop = events.acpUpdate.on((payload) => {
       const stream = streamRef.current;
       if (!stream || stream.turnId !== payload.turnId) return;
       if (payload.kind === "text") {

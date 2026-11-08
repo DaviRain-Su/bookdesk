@@ -375,7 +375,7 @@ export default function BookNode({ id, data, selected }: NodeProps) {
 
     (async () => {
       try {
-        // 走 books:// 自定义协议，由 Zig 直接回文件；不再把整本书 base64 搬进前端。
+        // 走 books:// 自定义协议，由 Go 后端直接回文件；不再把整本书 base64 搬进前端。
         const url = await Library.epubURL(d.bookId);
         if (cancelled) return;
         const book = ePub(url, { openAs: "epub" });
