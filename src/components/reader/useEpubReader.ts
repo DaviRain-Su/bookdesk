@@ -42,7 +42,15 @@ export interface ReaderProgress {
   chapter: string;
 }
 
-export type ReaderAction = "highlight" | "card" | "remove" | "character" | "lookup";
+export type ReaderAction =
+  | "highlight"
+  | "card"
+  | "remove"
+  | "character"
+  | "lookup"
+  | "ask"
+  | "explain"
+  | "translate";
 
 export interface UseEpubReaderOptions {
   bookId: string;
@@ -53,6 +61,8 @@ export interface UseEpubReaderOptions {
   initialReveal?: RevealTarget | null;
   /** 只有全屏阅读传；书卡不传，保持原来的紧凑样式。 */
   settings?: ReadingSettings;
+  /** 全屏阅读里创建人物后可以直接开始对话；书卡保持原来的行为。 */
+  mode?: "card" | "reader";
   onProgress?: (progress: ReaderProgress) => void;
   onReady?: () => void;
 }
@@ -235,6 +245,8 @@ export function useEpubReader(
   const { bookId } = options;
   const titleRef = useRef(options.title);
   titleRef.current = options.title;
+  const modeRef = useRef(options.mode ?? "card");
+  modeRef.current = options.mode ?? "card";
   const onProgressRef = useRef(options.onProgress);
   onProgressRef.current = options.onProgress;
   const onReadyRef = useRef(options.onReady);
@@ -421,8 +433,10 @@ export function useEpubReader(
       const left = offsetX + rect.left + rect.width / 2;
       const below = offsetY + rect.bottom;
       const flip = below > hostRect.height - 58;
+      // 浮层最宽 460px，留出半宽再夹一次，免得靠边时被书卡裁掉。
+      const half = 240;
       return {
-        x: Math.min(Math.max(left, 140), Math.max(140, hostRect.width - 140)),
+        x: Math.min(Math.max(left, half), Math.max(half, hostRect.width - half)),
         y: flip ? offsetY + rect.top - 8 : below,
         flip,
       };
@@ -1158,10 +1172,34 @@ export function useEpubReader(
           if (!name) return;
           window.dispatchEvent(
             new CustomEvent("bookdesk:add-character", {
-              detail: { bookId, bookTitle: titleRef.current || "未命名书籍", name },
+              detail: {
+                bookId,
+                bookTitle: titleRef.current || "未命名书籍",
+                name,
+                // 全屏阅读里点「人物」是想马上对话；书卡保持原来的行为，
+                // 先把人物卡放到画布上，由用户自己决定什么时候聊。
+                openChat: modeRef.current === "reader",
+              },
             }),
           );
           clearSelection();
+          setSelection(null);
+        };
+        const onAskRequest = (mode: "ask" | "explain" | "translate") => {
+          const current = selectionRef.current;
+          if (!current) return;
+          const text = current.text.trim();
+          if (!text) return;
+          window.dispatchEvent(
+            new CustomEvent("bookdesk:ask-selection", {
+              detail: {
+                bookId,
+                bookTitle: titleRef.current || "未命名书籍",
+                mode,
+                selection: text,
+              },
+            }),
+          );
           setSelection(null);
         };
         const onLookupRequest = () => {
@@ -1184,6 +1222,9 @@ export function useEpubReader(
           remove: onDeleteRequest,
           character: onCharacterRequest,
           lookup: onLookupRequest,
+          ask: () => onAskRequest("ask"),
+          explain: () => onAskRequest("explain"),
+          translate: () => onAskRequest("translate"),
         };
       } catch (err) {
         if (cancelled) return;

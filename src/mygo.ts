@@ -224,6 +224,24 @@ export interface SearchHit {
   highlights: number[][];
 }
 
+/**
+ * SelectionAskInput 是划选一段文字后「问 AI / 解释 / 翻译」的请求。
+ * 和人物对话一样，只带当前可见页和已读范围内的片段，不把整本书发出去。
+ */
+export interface SelectionAskInput {
+  bookId: string;
+  bookTitle: string;
+  mode: string;
+  selection: string;
+  question: string;
+  visibleText: string;
+  chapterTitle: string | null;
+  currentSpineIndex: number;
+  allowFuture: boolean;
+  turnId: string;
+  sessionKey: string;
+}
+
 export interface WordLookupInput {
   word: string;
   sentence: string | null;
@@ -366,6 +384,13 @@ export const Reading = {
 
 /** Ai 是服务类型。 */
 export const Ai = {
+  /**
+   * Ask 处理划选文字后的「问 AI / 解释 / 翻译」。
+   * 发送范围沿用人物对话的约束：只带当前可见页和已读范围内的片段。
+   */
+  ask(input: SelectionAskInput): Promise<ChatReply> {
+    return call("Ai.Ask", input);
+  },
   cancel(turnID: string): Promise<void> {
     return call("Ai.Cancel", turnID);
   },

@@ -3,25 +3,19 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   ChevronLeft,
   ChevronRight,
-  Highlighter,
   Languages,
   List,
   Loader2,
   Maximize2,
-  Quote,
   Search as SearchIcon,
-  TriangleAlert,
   Trash2,
-  UserRound,
+  TriangleAlert,
 } from "lucide-react";
 import type { RevealTarget } from "../../lib/reveal";
 import FindPopover from "../reader/FindPopover";
+import SelectionMenu from "../reader/SelectionMenu";
 import TocPopover from "../reader/TocPopover";
-import {
-  isEnglishSelection,
-  useEpubReader,
-  type ReaderProgress,
-} from "../reader/useEpubReader";
+import { useEpubReader, type ReaderProgress } from "../reader/useEpubReader";
 
 export interface BookNodeData {
   bookId: string;
@@ -178,45 +172,7 @@ export default function BookNode({ id, data, selected }: NodeProps) {
           />
         ) : null}
         {reader.selection ? (
-          <div
-            className={`selection-popover ${reader.selection.flip ? "is-flipped" : ""}`}
-            style={{ left: reader.selection.x, top: reader.selection.y }}
-            onMouseDown={(event) => event.preventDefault()}
-          >
-            {reader.selection.existingId ? (
-              <>
-                <button onClick={() => reader.runAction("card")}>
-                  <Quote size={13} />
-                  生成卡片
-                </button>
-                <button className="is-danger" onClick={() => reader.runAction("remove")}>
-                  <Trash2 size={13} />
-                  删除划线
-                </button>
-              </>
-            ) : (
-              <>
-                <button onClick={() => reader.runAction("highlight")}>
-                  <Highlighter size={13} />
-                  划线
-                </button>
-                <button onClick={() => reader.runAction("card")}>
-                  <Quote size={13} />
-                  生成卡片
-                </button>
-                <button onClick={() => reader.runAction("character")}>
-                  <UserRound size={13} />
-                  人物
-                </button>
-                {isEnglishSelection(reader.selection.text) ? (
-                  <button onClick={() => reader.runAction("lookup")}>
-                    <Languages size={13} />
-                    查词
-                  </button>
-                ) : null}
-              </>
-            )}
-          </div>
+          <SelectionMenu selection={reader.selection} onAction={reader.runAction} />
         ) : null}
         {reader.hover ? (
           <div

@@ -3,27 +3,21 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  Highlighter,
   Languages,
   List,
   Loader2,
-  Quote,
+  MessageCircle,
   Search as SearchIcon,
   TriangleAlert,
-  Trash2,
   Type,
-  UserRound,
 } from "lucide-react";
-import type { ReadingSettings } from "../../mygo";
+import { Characters, type Character, type ReadingSettings } from "../../mygo";
 import { convertHan } from "../../lib/han";
 import FindPopover from "./FindPopover";
 import ReaderSettingsPanel from "./ReaderSettingsPanel";
+import SelectionMenu from "./SelectionMenu";
 import TocPopover from "./TocPopover";
-import {
-  isEnglishSelection,
-  useEpubReader,
-  type ReaderProgress,
-} from "./useEpubReader";
+import { useEpubReader, type ReaderProgress } from "./useEpubReader";
 
 export interface ReaderBook {
   id: string;
@@ -57,6 +51,8 @@ export default function ReaderView({
   const [tocOpen, setTocOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [charactersOpen, setCharactersOpen] = useState(false);
+  const [characters, setCharacters] = useState<Character[] | null>(null);
 
   const reader = useEpubReader(hostRef, {
     bookId: book.id,
@@ -65,8 +61,39 @@ export default function ReaderView({
     initialSpineIndex,
     initialPercent,
     settings,
+    mode: "reader",
     onProgress,
   });
+
+  const openCharacters = () => {
+    setSettingsOpen(false);
+    setFindOpen(false);
+    setTocOpen(false);
+    if (charactersOpen) {
+      setCharactersOpen(false);
+      return;
+    }
+    setCharactersOpen(true);
+    setCharacters(null);
+    void Characters.list(book.id)
+      .then((list) => setCharacters(list))
+      .catch(() => setCharacters([]));
+  };
+
+  const startChat = (character: Character) => {
+    setCharactersOpen(false);
+    window.dispatchEvent(
+      new CustomEvent("bookdesk:open-chat", {
+        detail: {
+          characterId: character.id,
+          bookId: character.bookId,
+          bookTitle: book.title,
+          name: character.name,
+          description: character.description ?? "",
+        },
+      }),
+    );
+  };
 
   const spread = settings.spread && !settings.vertical;
   const pageWidth = spread ? settings.columnWidth * 2 + 48 : settings.columnWidth;
@@ -97,6 +124,10 @@ export default function ReaderView({
         setTocOpen(false);
         return;
       }
+      if (charactersOpen) {
+        setCharactersOpen(false);
+        return;
+      }
       if (reader.selection) {
         reader.dismissSelection();
         return;
@@ -117,6 +148,7 @@ export default function ReaderView({
     settingsOpen,
     findOpen,
     tocOpen,
+    charactersOpen,
     reader.selection,
     reader.hover,
     reader.dismissSelection,
@@ -147,12 +179,47 @@ export default function ReaderView({
             </span>
           </div>
           <div className="reader-tools">
+            <div className="reader-tool-wrap">
+              <button
+                className={`reader-tool ${charactersOpen ? "is-active" : ""}`}
+                title="伴读：和书里的人物对话"
+                onClick={openCharacters}
+              >
+                <MessageCircle size={16} />
+              </button>
+              {charactersOpen ? (
+                <div className="reader-char-popover" role="dialog" aria-label="伴读">
+                  <div className="reader-char-head">伴读</div>
+                  {characters === null ? (
+                    <div className="reader-char-empty">正在读取人物…</div>
+                  ) : characters.length === 0 ? (
+                    <div className="reader-char-empty">
+                      还没有人物。在书里划选一个人名，点「人物」就会建一张人物卡。
+                    </div>
+                  ) : (
+                    characters.map((character) => (
+                      <button
+                        key={character.id}
+                        className="reader-char-row"
+                        onClick={() => startChat(character)}
+                      >
+                        <span className="reader-char-name">{character.name}</span>
+                        {character.description ? (
+                          <span className="reader-char-desc">{character.description}</span>
+                        ) : null}
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
             <button
               className={`reader-tool ${settingsOpen ? "is-active" : ""}`}
               title="阅读设置"
               onClick={() => {
                 setFindOpen(false);
                 setTocOpen(false);
+                setCharactersOpen(false);
                 setSettingsOpen((v) => !v);
               }}
             >
@@ -164,6 +231,7 @@ export default function ReaderView({
               onClick={() => {
                 setSettingsOpen(false);
                 setTocOpen(false);
+                setCharactersOpen(false);
                 setFindOpen((v) => !v);
               }}
               disabled={reader.status !== "ready"}
@@ -176,6 +244,7 @@ export default function ReaderView({
               onClick={() => {
                 setSettingsOpen(false);
                 setFindOpen(false);
+                setCharactersOpen(false);
                 setTocOpen((v) => !v);
               }}
               disabled={reader.status !== "ready"}
@@ -218,45 +287,7 @@ export default function ReaderView({
             />
           ) : null}
           {reader.selection ? (
-            <div
-              className={`selection-popover ${reader.selection.flip ? "is-flipped" : ""}`}
-              style={{ left: reader.selection.x, top: reader.selection.y }}
-              onMouseDown={(event) => event.preventDefault()}
-            >
-              {reader.selection.existingId ? (
-                <>
-                  <button onClick={() => reader.runAction("card")}>
-                    <Quote size={13} />
-                    生成卡片
-                  </button>
-                  <button className="is-danger" onClick={() => reader.runAction("remove")}>
-                    <Trash2 size={13} />
-                    删除划线
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button onClick={() => reader.runAction("highlight")}>
-                    <Highlighter size={13} />
-                    划线
-                  </button>
-                  <button onClick={() => reader.runAction("card")}>
-                    <Quote size={13} />
-                    生成卡片
-                  </button>
-                  <button onClick={() => reader.runAction("character")}>
-                    <UserRound size={13} />
-                    人物
-                  </button>
-                  {isEnglishSelection(reader.selection.text) ? (
-                    <button onClick={() => reader.runAction("lookup")}>
-                      <Languages size={13} />
-                      查词
-                    </button>
-                  ) : null}
-                </>
-              )}
-            </div>
+            <SelectionMenu selection={reader.selection} onAction={reader.runAction} />
           ) : null}
           {reader.hover ? (
             <div

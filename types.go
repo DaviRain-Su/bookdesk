@@ -184,6 +184,22 @@ type ChatReply struct {
 	Message string `json:"message"`
 }
 
+// SelectionAskInput 是划选一段文字后「问 AI / 解释 / 翻译」的请求。
+// 和人物对话一样，只带当前可见页和已读范围内的片段，不把整本书发出去。
+type SelectionAskInput struct {
+	BookID            string  `json:"bookId"`
+	BookTitle         string  `json:"bookTitle"`
+	Mode              string  `json:"mode"`
+	Selection         string  `json:"selection"`
+	Question          string  `json:"question"`
+	VisibleText       string  `json:"visibleText"`
+	ChapterTitle      *string `json:"chapterTitle"`
+	CurrentSpineIndex int64   `json:"currentSpineIndex"`
+	AllowFuture       bool    `json:"allowFuture"`
+	TurnID            string  `json:"turnId"`
+	SessionKey        string  `json:"sessionKey"`
+}
+
 type WordLookupInput struct {
 	Word      string  `json:"word"`
 	Sentence  *string `json:"sentence"`

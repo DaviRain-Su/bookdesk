@@ -9,6 +9,7 @@ import Sidebar from "./components/Sidebar";
 import ExcerptsPanel from "./components/ExcerptsPanel";
 import SearchPanel from "./components/SearchPanel";
 import ChatPanel, { type ChatTarget } from "./components/ChatPanel";
+import AskPanel, { type AskRequest } from "./components/AskPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import LookupPanel, { type LookupRequest } from "./components/LookupPanel";
 import ReaderView, { type ReaderBook } from "./components/reader/ReaderView";
@@ -51,6 +52,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatTarget, setChatTarget] = useState<ChatTarget | null>(null);
+  const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
   const [lookup, setLookup] = useState<LookupRequest | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightCount, setHighlightCount] = useState(0);
@@ -414,7 +416,11 @@ export default function App() {
         setLibraryOpen(false);
         setSearchOpen(false);
         setSettingsOpen(false);
-        setChatTarget(null);
+        // 伴读面板跟着书走：换一本书时关掉上一本的对话和问答，同一本书则保留。
+        setChatTarget((current) => (current && current.bookId !== bookId ? null : current));
+        setAskRequest((current) =>
+          current && current.bookId !== bookId ? null : current,
+        );
         setReader({
           book: { id: book.id, title: book.title, author: book.author },
           initialCfi,
@@ -629,6 +635,7 @@ export default function App() {
       if (event.key.toLowerCase() !== "f") return;
       event.preventDefault();
       setLibraryOpen(false);
+      setAskRequest(null);
       setSearchOpen((v) => !v);
     };
     window.addEventListener("keydown", handler);
@@ -660,12 +667,31 @@ export default function App() {
       setLibraryOpen(false);
       setSearchOpen(false);
       setSettingsOpen(false);
+      setAskRequest(null);
       setChatTarget({
         characterId: typeof detail.characterId === "string" ? detail.characterId : null,
         bookId: detail.bookId,
         bookTitle: book?.title ?? "这本书",
         name: detail.name || "这个人物",
         description: detail.description ?? "",
+      });
+    };
+    const onAsk = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | { bookId?: string; bookTitle?: string; mode?: string; selection?: string }
+        | undefined;
+      if (!detail?.bookId || !detail.selection) return;
+      const mode =
+        detail.mode === "explain" || detail.mode === "translate" ? detail.mode : "ask";
+      setLibraryOpen(false);
+      setSearchOpen(false);
+      setSettingsOpen(false);
+      setChatTarget(null);
+      setAskRequest({
+        bookId: detail.bookId,
+        bookTitle: detail.bookTitle || "这本书",
+        mode,
+        selection: detail.selection,
       });
     };
     const onLookup = (event: Event) => {
@@ -680,12 +706,23 @@ export default function App() {
       });
     };
     window.addEventListener("bookdesk:open-chat", onChat);
+    window.addEventListener("bookdesk:ask-selection", onAsk);
     window.addEventListener("bookdesk:lookup-word", onLookup);
     return () => {
       window.removeEventListener("bookdesk:open-chat", onChat);
+      window.removeEventListener("bookdesk:ask-selection", onAsk);
       window.removeEventListener("bookdesk:lookup-word", onLookup);
     };
   }, [books]);
+
+  // 全屏阅读里看不到画布，生成摘录卡后回一句，免得以为没生效。
+  useEffect(() => {
+    const handler = () => {
+      if (reader) toast("已放到书桌");
+    };
+    window.addEventListener("bookdesk:quote-card-added", handler);
+    return () => window.removeEventListener("bookdesk:quote-card-added", handler);
+  }, [reader, toast]);
 
   const addTextCard = useCallback(() => {
     window.dispatchEvent(new CustomEvent("bookdesk:add-text-card"));
@@ -725,6 +762,7 @@ export default function App() {
             setSearchOpen(false);
             setSettingsOpen(false);
             setChatTarget(null);
+            setAskRequest(null);
             setLibraryOpen((v) => !v);
           }}
           onOpenExcerpts={() => {
@@ -732,12 +770,14 @@ export default function App() {
             setSearchOpen(false);
             setSettingsOpen(false);
             setChatTarget(null);
+            setAskRequest(null);
             setExcerptsOpen((v) => !v);
           }}
           onOpenSearch={() => {
             setLibraryOpen(false);
             setSettingsOpen(false);
             setChatTarget(null);
+            setAskRequest(null);
             setSearchOpen((v) => !v);
           }}
           onOpenReader={() => {
@@ -749,6 +789,7 @@ export default function App() {
             setLibraryOpen(false);
             setSearchOpen(false);
             setChatTarget(null);
+            setAskRequest(null);
             setSettingsOpen((v) => !v);
           }}
         />
@@ -764,6 +805,7 @@ export default function App() {
             setSearchOpen(false);
             setSettingsOpen(false);
             setChatTarget(null);
+            setAskRequest(null);
             setLibraryOpen((v) => !v);
           }}
           onFitView={() => window.dispatchEvent(new CustomEvent("bookdesk:fit-view"))}
@@ -842,6 +884,7 @@ export default function App() {
           onOpenHit={openSearchHit}
         />
         <ChatPanel target={chatTarget} onClose={() => setChatTarget(null)} />
+        <AskPanel request={askRequest} onClose={() => setAskRequest(null)} />
         <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         <LookupPanel request={lookup} onClose={() => setLookup(null)} />
       </div>

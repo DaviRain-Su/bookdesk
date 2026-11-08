@@ -418,6 +418,12 @@ function BoardCanvas({
       };
       setNodes((nds) => [...nds, node]);
       persistNode(node);
+      // 全屏阅读里看不到画布，加完卡片回一句，免得以为没生效。
+      window.dispatchEvent(
+        new CustomEvent("bookdesk:quote-card-added", {
+          detail: { bookId: detail.bookId ?? null },
+        }),
+      );
     };
     window.addEventListener("bookdesk:add-quote-card", handler);
     return () => window.removeEventListener("bookdesk:add-quote-card", handler);
@@ -426,7 +432,7 @@ function BoardCanvas({
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent).detail as
-        | { bookId?: string; bookTitle?: string; name?: string }
+        | { bookId?: string; bookTitle?: string; name?: string; openChat?: boolean }
         | undefined;
       if (!detail?.bookId) return;
       const bookId = detail.bookId;
@@ -478,6 +484,20 @@ function BoardCanvas({
                 },
                 eds,
               ),
+            );
+          }
+          if (detail.openChat) {
+            // 全屏阅读里点「人物」：人物卡已经放到画布上，直接把对话面板打开。
+            window.dispatchEvent(
+              new CustomEvent("bookdesk:open-chat", {
+                detail: {
+                  characterId: character.id,
+                  bookId,
+                  bookTitle: detail.bookTitle || "这本书",
+                  name: character.name,
+                  description: character.description ?? "",
+                },
+              }),
             );
           }
         })

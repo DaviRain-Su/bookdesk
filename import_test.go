@@ -7,6 +7,7 @@ import (
 
 func TestImportOne(t *testing.T) {
 	dir := t.TempDir()
+	resetTestDB()
 	userDataDir = dir
 	booksDir = filepath.Join(dir, "books")
 	imagesDir = filepath.Join(dir, "images")

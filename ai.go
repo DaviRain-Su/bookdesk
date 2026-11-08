@@ -394,6 +394,66 @@ const wordLookupSystem = `你是一位英语词典助手。用户会给你一个
 3. 一句话说明它在这个句子里的意思
 不要展开无关内容，不要输出 Markdown 标题。`
 
+// selectionSystemPrompt 按动作给划选文字配不同的角色。
+// 三种动作都只依据给出的书页内容，不替读者写卡片，也不主动扩展成全书总结。
+func selectionSystemPrompt(mode, bookTitle string) string {
+	switch mode {
+	case "explain":
+		return fmt.Sprintf(`你是一位阅读助手。读者正在读《%s》，选中了一段文字，请你解释它。
+规则：
+- 只依据给出的书页内容和选中的文字，不要编造书里没有的情节或背景。
+- 说清楚这段话在说什么、为什么重要，必要时点出隐含的前提。
+- 用中文回答，简洁，一般不超过 200 字。
+- 不要输出 Markdown 标题，不要复述规则本身。`, bookTitle)
+	case "translate":
+		return `你是一位翻译助手。读者选中了一段文字，请把它翻译成中文；如果原文已经是中文，就翻译成英文。
+只输出译文，不要解释，不要输出 Markdown 标题。`
+	default:
+		return fmt.Sprintf(`你是一位阅读助手。读者正在读《%s》，选中了一段文字并向你提问。
+规则：
+- 只依据给出的书页内容、选中的文字和读者已经读到的部分回答。书里没有的内容，就说不知道，不要编造。
+- 用中文回答，简洁，一般不超过 200 字。
+- 不要输出 Markdown 标题，不要复述规则本身。`, bookTitle)
+	}
+}
+
+// buildSelectionContext 只拼「已读范围」：选中的文字、当前可见页，
+// 以及（仅在允许后续章节时）其他章节里提到这段文字的片段。
+func buildSelectionContext(input SelectionAskInput) string {
+	snippetKey := firstRunes(input.Selection, 12)
+	base := buildContext(ChatInput{
+		BookID:            input.BookID,
+		BookTitle:         input.BookTitle,
+		CharacterName:     snippetKey,
+		VisibleText:       input.VisibleText,
+		ChapterTitle:      input.ChapterTitle,
+		CurrentSpineIndex: input.CurrentSpineIndex,
+		AllowFuture:       input.AllowFuture,
+	})
+	var out strings.Builder
+	out.WriteString(base)
+	selection := strings.TrimSpace(input.Selection)
+	if selection != "" {
+		cut := ceilCharBoundary(selection, min(len(selection), maxVisibleBytes))
+		out.WriteString("\n【读者选中的文字】\n")
+		out.WriteString(selection[:cut])
+		out.WriteString("\n")
+	}
+	return out.String()
+}
+
+// firstRunes 取前 n 个字符，用来在已读章节里找相关片段。
+func firstRunes(text string, n int) string {
+	count := 0
+	for i := range text {
+		if count == n {
+			return text[:i]
+		}
+		count++
+	}
+	return text
+}
+
 func (Ai) LookupWord(ctx context.Context, input WordLookupInput) (ChatReply, error) {
 	word := strings.TrimSpace(input.Word)
 	if word == "" {
@@ -426,4 +486,55 @@ func (Ai) LookupWord(ctx context.Context, input WordLookupInput) (ChatReply, err
 	model := readSetting(settingModel, defaultModel)
 	baseURL := readSetting(settingBaseURL, defaultBaseURL)
 	return postMessages(baseURL, *key, model, wordLookupSystem, user, 2000), nil
+}
+
+// Ask 处理划选文字后的「问 AI / 解释 / 翻译」。
+// 发送范围沿用人物对话的约束：只带当前可见页和已读范围内的片段。
+func (Ai) Ask(ctx context.Context, input SelectionAskInput) (ChatReply, error) {
+	selection := strings.TrimSpace(input.Selection)
+	if selection == "" {
+		return ChatReply{OK: false, Message: "先选中一段文字。"}, nil
+	}
+	mode := strings.TrimSpace(input.Mode)
+	if mode != "explain" && mode != "translate" {
+		mode = "ask"
+	}
+	question := strings.TrimSpace(input.Question)
+	if mode == "ask" && question == "" {
+		return ChatReply{OK: false, Message: "先写点什么再问吧。"}, nil
+	}
+
+	contextText := buildSelectionContext(input)
+	system := selectionSystemPrompt(mode, input.BookTitle)
+	user := contextText
+	switch mode {
+	case "explain":
+		user += "\n\n请解释这段文字。"
+	case "translate":
+		user += "\n\n请翻译这段文字。"
+	default:
+		user += "\n\n读者问：" + question
+	}
+
+	engine := readSetting(settingEngine, defaultEngine)
+	if engine == "acp" {
+		sessionKey := input.SessionKey
+		if sessionKey == "" {
+			sessionKey = "selection-ask"
+		}
+		config := agentConfig()
+		config.persistSession = true
+		if nativeEngine, ok := nativeEngineForCommand(config.command); ok {
+			return nativePrompt(ctx, nativeEngine, config.command, config.cwd, sessionKey, input.TurnID, system, user), nil
+		}
+		return acpPrompt(ctx, config, sessionKey, input.TurnID, system, user), nil
+	}
+
+	key := readKey()
+	if key == nil {
+		return missingKeyReply(), nil
+	}
+	model := readSetting(settingModel, defaultModel)
+	baseURL := readSetting(settingBaseURL, defaultBaseURL)
+	return postMessages(baseURL, *key, model, system, user, 4000), nil
 }
