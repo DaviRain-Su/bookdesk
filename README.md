@@ -17,11 +17,11 @@
 - [Zig](https://ziglang.org/) 0.17.1
 - Go 1.27 及以上
 - [Bun](https://bun.sh/)
-- myzig 框架的本地 clone：`/Users/davirian/mygo`（`egoist/mygo` 的 fork）。
+- myzig 框架的本地 clone（`egoist/mygo` 的 fork），默认放在本仓库旁边的 `../mygo`。
 
-本仓库通过 `go.mod` 的 `replace` 和 `build.zig` 的 SDK 路径指向该 clone。若放在别处，需要同时修改这两处：
+本仓库通过 `go.mod` 的 `replace` 和 `build.zig` 的 SDK 路径指向该 clone。若 clone 放在别处，需要同时修改这两处：
 
-- `go.mod`：`replace github.com/egoist/mygo => /你的路径/mygo`
+- `go.mod`：`replace github.com/egoist/mygo => ../mygo`
 - `build.zig`：`root_source_file = b.path("../mygo/zig/sdk/mygo.zig")`
 
 菜单需要 mygo 的「空 submenu 视为无 submenu」修复（commit `d3159399`，含 `menu_json_test.go`）；更早的 mygo 版本里，原生菜单项点击不会触发回调。
