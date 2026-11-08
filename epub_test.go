@@ -24,12 +24,20 @@ func writeTestEpub(t *testing.T) string {
     <meta name="cover" content="cover-img"/>
   </metadata>
   <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
     <item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>
     <item id="cover-img" href="cover.png" media-type="image/png" properties="cover-image"/>
   </manifest>
-  <spine><itemref idref="ch1"/><itemref idref="ch2"/></spine>
+  <spine><itemref idref="nav"/><itemref idref="ch1"/><itemref idref="ch2"/></spine>
 </package>`
+	nav := `<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>目录</title></head>
+<body><nav epub:type="toc"><ol>
+<li><a href="ch1.xhtml">第一章 迁移之后</a></li>
+<li><a href="ch2.xhtml">第二章 画布</a></li>
+</ol></nav></body></html>`
 	ch1 := `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head>
 <body><h1>第一章 迁移之后</h1>
@@ -71,6 +79,7 @@ func writeTestEpub(t *testing.T) string {
 	write("mimetype", "application/epub+zip", true)
 	write("META-INF/container.xml", container, false)
 	write("OEBPS/content.opf", opf, false)
+	write("OEBPS/nav.xhtml", nav, false)
 	write("OEBPS/ch1.xhtml", ch1, false)
 	write("OEBPS/ch2.xhtml", ch2, false)
 	w, err := z.CreateHeader(&zip.FileHeader{Name: "OEBPS/cover.png", Method: zip.Deflate})
@@ -99,6 +108,10 @@ func TestParseSampleEpub(t *testing.T) {
 	}
 	if len(parsed.Chapters) != 2 {
 		t.Fatalf("chapters = %d", len(parsed.Chapters))
+	}
+	// 目录页不进索引，但后面章节的 spine 下标不能因此错位。
+	if parsed.Chapters[0].SpineIndex != 1 || parsed.Chapters[1].SpineIndex != 2 {
+		t.Errorf("spine indices = %d, %d", parsed.Chapters[0].SpineIndex, parsed.Chapters[1].SpineIndex)
 	}
 	if parsed.CoverBytes == nil || parsed.CoverExt != "png" {
 		t.Errorf("cover = %d bytes, ext %q", len(parsed.CoverBytes), parsed.CoverExt)

@@ -75,6 +75,10 @@ func runSearch(qRaw string, bookID *string) ([]SearchHit, error) {
 			hlStart := utf16Len(snippet, len(prefix)+(matchStart-start))
 			hlEnd := utf16Len(snippet, len(prefix)+(matchEnd-start))
 			charOffset := int64(matchStart)
+			var pageLabel *string
+			if label := chapterLabel(ch.Text); label != "" {
+				pageLabel = &label
+			}
 			hits = append(hits, SearchHit{
 				BookID: ch.BookID,
 				Title:  title,
@@ -82,6 +86,7 @@ func runSearch(qRaw string, bookID *string) ([]SearchHit, error) {
 					BookID:     ch.BookID,
 					SpineIndex: ch.SpineIndex,
 					Href:       ch.Href,
+					PageLabel:  pageLabel,
 					CharOffset: &charOffset,
 				},
 				Snippet:    snippet,
@@ -93,6 +98,23 @@ func runSearch(qRaw string, bookID *string) ([]SearchHit, error) {
 		perBook[ch.BookID] = count + chapterHits
 	}
 	return hits, nil
+}
+
+// chapterLabel 取章节正文的第一行当分区标题。多数 EPUB 的第一行
+// 就是 h1/h2 的章节名；取不到就返回空，前端退回「第 N 节」。
+func chapterLabel(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		runes := []rune(line)
+		if len(runes) > 40 {
+			return string(runes[:40]) + "…"
+		}
+		return line
+	}
+	return ""
 }
 
 func (Search) Query(ctx context.Context, q string) ([]SearchHit, error) {

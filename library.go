@@ -159,13 +159,43 @@ func importOne(path string) (Book, error) {
 
 	chapters := make([]ChapterRow, len(parsed.Chapters))
 	for i, ch := range parsed.Chapters {
-		chapters[i] = ChapterRow{SpineIndex: int64(i), Href: ch.Href, Text: ch.Text}
+		chapters[i] = ChapterRow{SpineIndex: ch.SpineIndex, Href: ch.Href, Text: ch.Text}
 	}
 	if err := insertChapters(book.ID, chapters); err != nil {
 		return Book{}, err
 	}
 	ok = true
 	return book, nil
+}
+
+// textIndexVersion 是正文索引的版本。2 起目录页、封面页、扉页不再
+// 进搜索索引；旧库在启动时按这个版本重解析一次。
+const textIndexVersion = "2"
+
+func migrateTextIndex() {
+	current, err := getSetting("text.version")
+	if err == nil && current != nil && *current == textIndexVersion {
+		return
+	}
+	books, err := listBooks()
+	if err != nil {
+		return
+	}
+	for _, book := range books {
+		parsed, err := parseEpub(filepath.Join(booksDir, book.ID, "book.epub"))
+		if err != nil {
+			continue
+		}
+		chapters := make([]ChapterRow, len(parsed.Chapters))
+		for i, ch := range parsed.Chapters {
+			chapters[i] = ChapterRow{SpineIndex: ch.SpineIndex, Href: ch.Href, Text: ch.Text}
+		}
+		if len(chapters) == 0 {
+			continue
+		}
+		_ = insertChapters(book.ID, chapters)
+	}
+	_ = setSetting("text.version", textIndexVersion)
 }
 
 func (Library) List(ctx context.Context) ([]Book, error) {

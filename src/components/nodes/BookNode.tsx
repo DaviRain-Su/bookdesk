@@ -52,6 +52,14 @@ interface SelectionState {
   existingId?: string;
 }
 
+interface HoverState {
+  word: string;
+  sentence: string;
+  x: number;
+  y: number;
+  flip: boolean;
+}
+
 const HIGHLIGHT_STYLES = {
   fill: "#ffe9a3",
   "fill-opacity": "0.6",
@@ -180,6 +188,7 @@ export default function BookNode({ id, data, selected }: NodeProps) {
   const [findLoading, setFindLoading] = useState(false);
   const [chapter, setChapter] = useState("");
   const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
   const [page, setPage] = useState({
     index: typeof d.spineIndex === "number" ? d.spineIndex : 0,
     total: 0,
@@ -191,6 +200,9 @@ export default function BookNode({ id, data, selected }: NodeProps) {
   const chapterRef = useRef("");
   const selectionRef = useRef<SelectionState | null>(null);
   selectionRef.current = selection;
+  const hoverRef = useRef<HoverState | null>(null);
+  hoverRef.current = hover;
+  const sectionTitles = useRef<Map<string, string>>(new Map());
   const selectionRangeRef = useRef<{ contents: Contents; range: Range } | null>(null);
   const actionRef = useRef<{
     highlight: () => void;
@@ -283,21 +295,21 @@ export default function BookNode({ id, data, selected }: NodeProps) {
 
   useEffect(() => {
     let cancelled = false;
-    let cleanupTimer: (() => void) | null = null;
     let unregisterContext: (() => void) | null = null;
+    let hoverTimer = 0;
+    let lastHoverAt = 0;
     const host = hostRef.current;
     if (!host) return;
 
     const chapterFor = (href: string): string => {
       const key = hrefKey(href);
-      let match = "";
       for (const entry of tocRef.current) {
         if (hrefKey(entry.href) === key) {
-          match = entry.label;
-          break;
+          return entry.label;
         }
       }
-      return match;
+      // 没有目录的书，退回章节自己的第一个标题。
+      return sectionTitles.current.get(key) ?? "";
     };
 
     const placePopover = (rect: DOMRect, frame: HTMLElement | null): Omit<SelectionState, "cfiRange" | "text" | "existingId"> => {
@@ -319,22 +331,12 @@ export default function BookNode({ id, data, selected }: NodeProps) {
       const rendition = renditionRef.current;
       if (!rendition) return;
       highlightCfis.current.set(highlightId, cfiRange);
+      // 点击由书页文档上的统一监听处理，这样划线的 SVG 层可以
+      // pointer-events: none，划选也能从已经划过的文字上起手。
       rendition.annotations.highlight(
         cfiRange,
         { id: highlightId },
-        (event: Event) => {
-          const target = event.target as Element | null;
-          if (!target) return;
-          const doc = target.ownerDocument;
-          const frame = doc.defaultView?.frameElement as HTMLElement | null;
-          const rect = target.getBoundingClientRect();
-          setSelection({
-            cfiRange,
-            text: highlightTexts.current.get(highlightId) ?? "",
-            existingId: highlightId,
-            ...placePopover(rect, frame),
-          });
-        },
+        undefined,
         "rc-highlight",
         HIGHLIGHT_STYLES,
       );
@@ -386,12 +388,34 @@ export default function BookNode({ id, data, selected }: NodeProps) {
           return;
         }
 
+        // 书页 iframe 需要 allow-scripts 才能收到鼠标事件（悬停、点击划线）。
+        // 书自带的脚本用 CSP 全部禁掉，只保留样式、图片和文字。
+        const spineHooks = (book.spine as unknown as {
+          hooks?: { content?: { register: (fn: (doc: Document) => void) => void } };
+        }).hooks;
+        spineHooks?.content?.register((doc: Document) => {
+          try {
+            const head = doc.head ?? doc.documentElement;
+            if (!head) return;
+            const meta = doc.createElement("meta");
+            meta.setAttribute("http-equiv", "Content-Security-Policy");
+            meta.setAttribute("content", "script-src 'none'; object-src 'none'; frame-src 'none'");
+            head.insertBefore(meta, head.firstChild);
+            // meta refresh 能把 iframe 导航到别处，绕开上面的 CSP。
+            for (const el of Array.from(doc.querySelectorAll('meta[http-equiv="refresh" i]'))) {
+              el.remove();
+            }
+          } catch {
+            /* 结构不标准的书忽略 */
+          }
+        });
+
         const rendition = book.renderTo(host, {
           width: "100%",
           height: "100%",
           flow: "paginated",
           spread: "none",
-          allowScriptedContent: false,
+          allowScriptedContent: true,
         });
         renditionRef.current = rendition;
 
@@ -459,6 +483,11 @@ export default function BookNode({ id, data, selected }: NodeProps) {
           setPage({ index, total, percent: overall });
           setChapter(label);
           setSelection(null);
+          setHover(null);
+          if (hoverTimer) {
+            window.clearTimeout(hoverTimer);
+            hoverTimer = 0;
+          }
           const cfi = String(start.cfi ?? "");
           if (cfi && cfi !== lastCfi.current) {
             lastCfi.current = cfi;
@@ -492,6 +521,143 @@ export default function BookNode({ id, data, selected }: NodeProps) {
           setSelection({ cfiRange, text, ...placePopover(rect, frame) });
         };
 
+        // 书页 iframe 现在允许脚本（见上面的 CSP），事件能正常收到。
+        // 悬停英文单词时先显示一个「查词」小浮层，点了才真正发请求。
+        const clearHover = () => {
+          if (hoverTimer) {
+            window.clearTimeout(hoverTimer);
+            hoverTimer = 0;
+          }
+          if (hoverRef.current) setHover(null);
+        };
+
+        const wordAtPoint = (doc: Document, x: number, y: number) => {
+          let range: Range | null = null;
+          try {
+            range = doc.caretRangeFromPoint(x, y);
+          } catch {
+            return null;
+          }
+          if (!range) return null;
+          const node = range.startContainer;
+          if (node.nodeType !== Node.TEXT_NODE) return null;
+          const text = (node as Text).data;
+          const isWordChar = (ch: string | undefined) => !!ch && /[A-Za-z'’\-]/.test(ch);
+          let start = range.startOffset;
+          let end = range.startOffset;
+          while (start > 0 && isWordChar(text[start - 1])) start -= 1;
+          while (end < text.length && isWordChar(text[end])) end += 1;
+          const word = text.slice(start, end).trim();
+          if (!isEnglishSelection(word)) return null;
+          const wordRange = doc.createRange();
+          wordRange.setStart(node, start);
+          wordRange.setEnd(node, end);
+          return { word, range: wordRange };
+        };
+
+        const contentsByDoc = new WeakMap<Document, Contents>();
+        const boundDocs = new WeakSet<Document>();
+
+        const onHoverMove = (event: MouseEvent) => {
+          if (selectionRef.current) return;
+          const now = Date.now();
+          if (now - lastHoverAt < 80) return;
+          lastHoverAt = now;
+          const doc = event.currentTarget as Document;
+          const found = wordAtPoint(doc, event.clientX, event.clientY);
+          if (!found) {
+            clearHover();
+            return;
+          }
+          if (hoverRef.current?.word === found.word) return;
+          if (hoverTimer) window.clearTimeout(hoverTimer);
+          const frame = doc.defaultView?.frameElement as HTMLElement | null;
+          const rect = found.range.getBoundingClientRect();
+          const sentence = sentenceAround(found.range);
+          hoverTimer = window.setTimeout(() => {
+            hoverTimer = 0;
+            setHover({ word: found.word, sentence, ...placePopover(rect, frame) });
+          }, 320);
+        };
+
+        const onHoverLeave = () => {
+          clearHover();
+        };
+
+        const onContentClick = (event: MouseEvent) => {
+          if (hoverRef.current) clearHover();
+          const doc = event.currentTarget as Document;
+          const contents = contentsByDoc.get(doc);
+          if (!contents) return;
+          const sel = contents.window.getSelection();
+          if (sel && sel.rangeCount > 0 && !sel.isCollapsed) return;
+          let caret: Range | null = null;
+          try {
+            caret = doc.caretRangeFromPoint(event.clientX, event.clientY);
+          } catch {
+            caret = null;
+          }
+          if (!caret) {
+            if (selectionRef.current) {
+              lastSelectionCfi.current = "";
+              setSelection(null);
+            }
+            return;
+          }
+          for (const [highlightId, cfi] of highlightCfis.current) {
+            let range: Range | null = null;
+            try {
+              range = contents.range(cfi);
+            } catch {
+              continue;
+            }
+            if (!range) continue;
+            let inside = false;
+            try {
+              inside = range.isPointInRange(caret.startContainer, caret.startOffset);
+            } catch {
+              continue;
+            }
+            if (!inside) continue;
+            lastSelectionCfi.current = "";
+            const frame = doc.defaultView?.frameElement as HTMLElement | null;
+            setSelection({
+              cfiRange: cfi,
+              text: highlightTexts.current.get(highlightId) ?? "",
+              existingId: highlightId,
+              ...placePopover(range.getBoundingClientRect(), frame),
+            });
+            return;
+          }
+          if (selectionRef.current) {
+            lastSelectionCfi.current = "";
+            setSelection(null);
+          }
+        };
+
+        const bindContents = (contents: Contents | undefined, href: string) => {
+          const doc = contents?.document;
+          if (!contents || !doc || boundDocs.has(doc)) return;
+          boundDocs.add(doc);
+          contentsByDoc.set(doc, contents);
+          doc.addEventListener("mousemove", onHoverMove);
+          doc.addEventListener("mouseleave", onHoverLeave);
+          doc.addEventListener("click", onContentClick);
+          // 没有目录的书，用章节自己的第一个标题当分区标题。
+          const heading = doc.querySelector("h1, h2, h3");
+          const label = (heading?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+          if (!href || !label) return;
+          sectionTitles.current.set(hrefKey(href), label);
+          if (!chapterRef.current && hrefKey(currentHref.current) === hrefKey(href)) {
+            chapterRef.current = label;
+            setChapter(label);
+          }
+        };
+
+        rendition.on("rendered", (section: { href?: string }, view: { contents?: Contents }) => {
+          bindContents(view?.contents, String(section?.href ?? ""));
+        });
+
         rendition.on("selected", (cfiRange: string, contents: Contents) => {
           const sel = contents.window.getSelection();
           if (!sel || sel.rangeCount === 0) return;
@@ -501,39 +667,6 @@ export default function BookNode({ id, data, selected }: NodeProps) {
           const frame = contents.document.defaultView?.frameElement as HTMLElement | null;
           showSelection(cfiRange, text, range.getBoundingClientRect(), frame, contents, range);
         });
-
-        // WKWebView 的沙箱 iframe 里，父页面注册的事件监听不会触发；
-        // 因此轮询选区作为兜底，保证划选在 macOS 上可用。
-        const selectionTimer = window.setInterval(() => {
-          if (selectionRef.current?.existingId) return;
-          const contentsList = rendition.getContents() as unknown as Contents[];
-          let found = false;
-          for (const contents of contentsList) {
-            const sel = contents.window.getSelection();
-            if (!sel || sel.rangeCount === 0) continue;
-            const text = sel.toString().trim();
-            if (!text) continue;
-            const range = sel.getRangeAt(0);
-            if (range.collapsed) continue;
-            let cfi = "";
-            try {
-              cfi = contents.cfiFromRange(range);
-            } catch {
-              continue;
-            }
-            const frame = contents.document.defaultView?.frameElement as HTMLElement | null;
-            showSelection(cfi, text, range.getBoundingClientRect(), frame, contents, range);
-            found = true;
-            break;
-          }
-          if (!found) {
-            lastSelectionCfi.current = "";
-            if (selectionRef.current && !selectionRef.current.existingId) {
-              setSelection(null);
-            }
-          }
-        }, 350);
-        cleanupTimer = () => window.clearInterval(selectionTimer);
 
         book.loaded.navigation
           .then((nav) => {
@@ -738,7 +871,7 @@ export default function BookNode({ id, data, selected }: NodeProps) {
       tempHighlightRef.current = null;
       selectionRangeRef.current = null;
       unregisterContext?.();
-      cleanupTimer?.();
+      if (hoverTimer) window.clearTimeout(hoverTimer);
       try {
         renditionRef.current?.destroy();
       } catch {
@@ -868,7 +1001,9 @@ export default function BookNode({ id, data, selected }: NodeProps) {
                       });
                     }}
                   >
-                    <span className="find-hit-meta">第 {hit.location.spineIndex + 1} 节</span>
+                    <span className="find-hit-meta">
+                      {hit.location.pageLabel || `第 ${hit.location.spineIndex + 1} 节`}
+                    </span>
                     <span className="find-hit-text">
                       <Snippet text={hit.snippet} ranges={hit.highlights} />
                     </span>
@@ -934,6 +1069,33 @@ export default function BookNode({ id, data, selected }: NodeProps) {
                 ) : null}
               </>
             )}
+          </div>
+        ) : null}
+        {hover ? (
+          <div
+            className={`hover-popover ${hover.flip ? "is-flipped" : ""}`}
+            style={{ left: hover.x, top: hover.y }}
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            <span className="hover-word">{hover.word}</span>
+            <button
+              onClick={() => {
+                const current = hover;
+                setHover(null);
+                window.dispatchEvent(
+                  new CustomEvent("bookdesk:lookup-word", {
+                    detail: {
+                      word: current.word,
+                      sentence: current.sentence,
+                      bookTitle: d.title ?? "未命名书籍",
+                    },
+                  }),
+                );
+              }}
+            >
+              <Languages size={13} />
+              查词
+            </button>
           </div>
         ) : null}
       </div>

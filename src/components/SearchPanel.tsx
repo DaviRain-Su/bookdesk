@@ -149,7 +149,9 @@ export default function SearchPanel({ open, books, onClose, onOpenHit }: Props) 
                       className="search-hit"
                       onClick={() => onOpenHit(hit, occurrence, trimmed)}
                     >
-                      <span className="search-hit-meta">第 {hit.location.spineIndex + 1} 节</span>
+                      <span className="search-hit-meta">
+                        {hit.location.pageLabel || `第 ${hit.location.spineIndex + 1} 节`}
+                      </span>
                       <span className="search-hit-text">
                         <Snippet text={hit.snippet} ranges={hit.highlights} />
                       </span>

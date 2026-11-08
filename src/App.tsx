@@ -491,6 +491,15 @@ export default function App() {
           onSelect={setTool}
           onAddTextCard={addTextCard}
           onAddImageCard={() => void addImageCard()}
+          onAddBook={() => void runImport()}
+          onOpenLibrary={() => {
+            setSearchOpen(false);
+            setSettingsOpen(false);
+            setChatTarget(null);
+            setLibraryOpen((v) => !v);
+          }}
+          onFitView={() => window.dispatchEvent(new CustomEvent("bookdesk:fit-view"))}
+          onCreateBoard={() => void createBoard()}
         />
         {board && boardState ? (
           <CanvasBoard

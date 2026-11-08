@@ -131,7 +131,15 @@ function BoardCanvas({
 }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges);
-  const { screenToFlowPosition, setCenter } = useReactFlow();
+  const { screenToFlowPosition, setCenter, fitView } = useReactFlow();
+
+  useEffect(() => {
+    const handler = () => {
+      void fitView({ duration: 260, padding: 0.2 });
+    };
+    window.addEventListener("bookdesk:fit-view", handler);
+    return () => window.removeEventListener("bookdesk:fit-view", handler);
+  }, [fitView]);
 
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;

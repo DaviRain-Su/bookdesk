@@ -424,6 +424,44 @@ button:disabled {
   background: var(--border);
 }
 
+.tool-more {
+  position: relative;
+}
+
+.tool-more-menu {
+  position: absolute;
+  left: calc(100% + 10px);
+  bottom: 0;
+  z-index: 12;
+  min-width: 148px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  box-shadow: var(--shadow-float);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tool-more-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tool-more-menu button:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
 /* ---------- Canvas ---------- */
 
 .canvas-wrap {
@@ -798,11 +836,10 @@ button:disabled {
   border: 0;
 }
 
-/* 书页 iframe 是 sandbox="allow-same-origin"，里面收不到点击事件；
-   让划线的 SVG 组自己接收点击，epub.js 的 annotation 回调才会触发。 */
-.epub-viewport svg g[data-id^="hl-"] {
-  pointer-events: auto;
-  cursor: pointer;
+/* 划线的 SVG 层保持 pointer-events: none：点击由书页文档上的监听处理，
+   这样划选可以从已经划过的文字上起手。 */
+.epub-viewport svg {
+  pointer-events: none;
 }
 
 .reader-state {
@@ -1308,6 +1345,46 @@ button:disabled {
 
 .selection-popover button.is-danger {
   color: #f0b6ac;
+}
+
+.hover-popover {
+  position: absolute;
+  z-index: 7;
+  transform: translate(-50%, 8px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  background: rgba(35, 34, 30, 0.94);
+  border-radius: 9px;
+  box-shadow: 0 6px 20px rgba(35, 34, 30, 0.25);
+  white-space: nowrap;
+}
+
+.hover-popover.is-flipped {
+  transform: translate(-50%, -100%);
+}
+
+.hover-word {
+  color: #f5f2e8;
+  font-size: 12px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hover-popover button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  color: #dfe9de;
+  font-size: 12px;
+}
+
+.hover-popover button:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 /* ---------- Node delete ---------- */

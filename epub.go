@@ -13,8 +13,11 @@ import (
 // 解析器按标签扫描而不是严格 XML：很多 EPUB 的 XHTML 并不完全合法。
 
 type epubChapter struct {
-	Href string
-	Text string
+	// SpineIndex 是这一章在 EPUB spine 里的真实位置。目录页、封面页
+	// 等不进索引的文档会被跳过，所以不能用切片下标代替。
+	SpineIndex int64
+	Href       string
+	Text       string
 }
 
 type epubParsed struct {
@@ -337,6 +340,46 @@ func htmlToText(html string) string {
 	return normalizeWhitespace(out.String())
 }
 
+// isNavDocument 判断一个 XHTML 是不是目录页。目录页不进搜索索引，
+// 否则搜「第一章」这类词会先命中目录，而不是正文。
+func isNavDocument(html string) bool {
+	lower := strings.ToLower(html)
+	i := 0
+	for {
+		pos := strings.IndexByte(lower[i:], '<')
+		if pos < 0 {
+			return false
+		}
+		tag, ok := nextTag(lower, i+pos)
+		if !ok {
+			return false
+		}
+		i = tag.contentStart
+		if tag.closing {
+			continue
+		}
+		ln := localName(tag.name)
+		if ln != "nav" && ln != "body" && ln != "html" {
+			continue
+		}
+		if v, ok := getAttr(tag.attrs, "epub:type"); ok && hasToken(v, "toc") {
+			return true
+		}
+		if v, ok := getAttr(tag.attrs, "role"); ok && strings.EqualFold(strings.TrimSpace(v), "doc-toc") {
+			return true
+		}
+	}
+}
+
+func hasToken(list, token string) bool {
+	for _, part := range strings.Fields(list) {
+		if strings.EqualFold(part, token) {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeWhitespace(raw string) string {
 	out := make([]byte, 0, len(raw))
 	lastSpace := false
@@ -542,6 +585,8 @@ func parseEpub(filePath string) (*epubParsed, error) {
 	var spineIDs []string
 	var coverID string
 	var coverHrefDirect string
+	// guide 里标成目录 / 封面 / 扉页的文档不进搜索索引。
+	skipRefs := make(map[string]bool)
 
 	i = 0
 	for {
@@ -589,8 +634,15 @@ func parseEpub(filePath string) (*epubParsed, error) {
 			}
 		case "reference":
 			kind, _ := getAttr(tag.attrs, "type")
+			href, _ := getAttr(tag.attrs, "href")
 			if strings.EqualFold(kind, "cover") {
-				coverHrefDirect, _ = getAttr(tag.attrs, "href")
+				coverHrefDirect = href
+			}
+			switch strings.ToLower(kind) {
+			case "toc", "cover", "title-page", "titlepage":
+				if href != "" {
+					skipRefs[resolveHref(opfPath, href)] = true
+				}
 			}
 		}
 	}
@@ -642,13 +694,15 @@ func parseEpub(filePath string) (*epubParsed, error) {
 	}
 
 	var chapters []epubChapter
-	for _, idref := range spineIDs {
+	for spineIndex, idref := range spineIDs {
 		href := ""
 		mediaType := ""
+		properties := ""
 		for _, item := range manifest {
 			if item.id == idref {
 				href = item.href
 				mediaType = item.mediaType
+				properties = item.properties
 				break
 			}
 		}
@@ -656,6 +710,10 @@ func parseEpub(filePath string) (*epubParsed, error) {
 			continue
 		}
 		if mediaType != "" && !strings.Contains(mediaType, "html") && !strings.Contains(mediaType, "xml") {
+			continue
+		}
+		// 目录页、封面页、扉页只用于阅读，不参与搜索。
+		if skipRefs[href] || hasToken(properties, "nav") || hasToken(properties, "cover") {
 			continue
 		}
 		entry, ok := entries[href]
@@ -666,7 +724,14 @@ func parseEpub(filePath string) (*epubParsed, error) {
 		if err != nil {
 			continue
 		}
-		chapters = append(chapters, epubChapter{Href: href, Text: htmlToText(string(data))})
+		if isNavDocument(string(data)) {
+			continue
+		}
+		chapters = append(chapters, epubChapter{
+			SpineIndex: int64(spineIndex),
+			Href:       href,
+			Text:       htmlToText(string(data)),
+		})
 	}
 
 	return &epubParsed{

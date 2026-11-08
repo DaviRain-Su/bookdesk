@@ -273,6 +273,11 @@ func insertChapters(bookID string, chapters []ChapterRow) error {
 	}
 	ctx := context.Background()
 	var batch []sqlite.Statement
+	// 重新解析一本书时先清掉旧正文，避免留下目录页之类的旧行。
+	batch = append(batch, sqlite.Statement{
+		SQL:  "DELETE FROM book_text WHERE book_id = ?",
+		Args: []any{bookID},
+	})
 	if ftsReady {
 		batch = append(batch, sqlite.Statement{
 			SQL:  "DELETE FROM book_text_fts WHERE book_id = ?",

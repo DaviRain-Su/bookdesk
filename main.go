@@ -86,6 +86,7 @@ func onReady() {
 	if err := openDB(); err != nil {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
+	migrateTextIndex()
 
 	win := mygo.NewWindow(mygo.WindowOptions{
 		Title:           "书桌",
