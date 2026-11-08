@@ -26,6 +26,7 @@ interface Props {
   settingsOpen: boolean;
   onAddBook: () => void;
   onOpenLibrary: () => void;
+  onOpenExcerpts: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onOpenBoards: () => void;
@@ -44,6 +45,7 @@ export default function TopBar({
   settingsOpen,
   onAddBook,
   onOpenLibrary,
+  onOpenExcerpts,
   onOpenSearch,
   onOpenSettings,
   onOpenBoards,
@@ -209,10 +211,10 @@ export default function TopBar({
           <Search size={15} />
           跨书搜索
         </button>
-        <div className="stat" title="摘录数量">
+        <button className="stat stat-button" title="查看所有摘录" onClick={onOpenExcerpts}>
           <Highlighter size={15} />
           <span>摘录 {highlightCount}</span>
-        </div>
+        </button>
         <button className="icon-button" onClick={onOpenLibrary} title="书架">
           <Library size={17} />
         </button>

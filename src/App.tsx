@@ -5,11 +5,13 @@ import TopBar, { type BoardOption } from "./components/TopBar";
 import Toolbar, { type Tool } from "./components/Toolbar";
 import CanvasBoard, { markBoardDeleted } from "./components/CanvasBoard";
 import LibraryDrawer, { type LibraryBook } from "./components/LibraryDrawer";
+import ExcerptsPanel from "./components/ExcerptsPanel";
 import SearchPanel from "./components/SearchPanel";
 import ChatPanel, { type ChatTarget } from "./components/ChatPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import LookupPanel, { type LookupRequest } from "./components/LookupPanel";
 import type { SearchHit } from "./lib/search";
+import type { Highlight } from "./types";
 import { Board, Library, Notes, events } from "./mygo";
 import { parseEdges, parseNodes, parseViewport } from "./lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "./lib/reveal";
@@ -40,6 +42,7 @@ export default function App() {
   const [boards, setBoards] = useState<BoardOption[]>([]);
   const [boardState, setBoardState] = useState<BoardState | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [excerptsOpen, setExcerptsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatTarget, setChatTarget] = useState<ChatTarget | null>(null);
@@ -87,14 +90,12 @@ export default function App() {
   const refreshHighlights = useCallback(async () => {
     try {
       const list = await Notes.listHighlights(null);
-      const ids = new Set(boardBookIds);
-      setHighlightCount(
-        ids.size === 0 ? list.length : list.filter((h) => ids.has(h.bookId)).length,
-      );
+      // 摘录是整座书桌的，不跟着当前画布变；否则别的画布上的划线会「看不到」。
+      setHighlightCount(list.length);
     } catch {
       /* 统计失败不影响阅读 */
     }
-  }, [boardBookIds]);
+  }, []);
 
   useEffect(() => {
     void refreshBooks();
@@ -283,6 +284,36 @@ export default function App() {
     [boardBookIds, books],
   );
 
+  const openHighlight = useCallback(
+    (highlight: Highlight) => {
+      setExcerptsOpen(false);
+      const reveal: RevealTarget = {
+        bookId: highlight.bookId,
+        href: highlight.location.href ?? null,
+        spineIndex: highlight.location.spineIndex,
+        query: "",
+        occurrence: 0,
+        cfi: highlight.location.cfi ?? null,
+      };
+      if (boardBookIds.includes(highlight.bookId)) {
+        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
+        return;
+      }
+      const book = books.find((b) => b.id === highlight.bookId);
+      window.dispatchEvent(
+        new CustomEvent("bookdesk:add-book", {
+          detail: {
+            bookId: highlight.bookId,
+            title: book?.title ?? "这本书",
+            author: book?.author ?? null,
+            reveal,
+          },
+        }),
+      );
+    },
+    [boardBookIds, books],
+  );
+
   const runImport = useCallback(
     async (paths?: string[]) => {
       try {
@@ -426,6 +457,13 @@ export default function App() {
           setChatTarget(null);
           setLibraryOpen((v) => !v);
         }}
+        onOpenExcerpts={() => {
+          setLibraryOpen(false);
+          setSearchOpen(false);
+          setSettingsOpen(false);
+          setChatTarget(null);
+          setExcerptsOpen((v) => !v);
+        }}
         onOpenSearch={() => {
           setLibraryOpen(false);
           setSettingsOpen(false);
@@ -474,6 +512,12 @@ export default function App() {
             setLibraryOpen(false);
           }}
           onImport={() => void runImport()}
+        />
+        <ExcerptsPanel
+          open={excerptsOpen}
+          books={books}
+          onClose={() => setExcerptsOpen(false)}
+          onOpenHighlight={openHighlight}
         />
         <SearchPanel
           open={searchOpen}

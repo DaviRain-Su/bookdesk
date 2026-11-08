@@ -556,6 +556,14 @@ export default function BookNode({ id, data, selected }: NodeProps) {
         const reveal = async (target: RevealTarget) => {
           const current = renditionRef.current;
           if (!current) return;
+          if (target.cfi) {
+            try {
+              await current.display(target.cfi);
+              return;
+            } catch {
+              /* CFI 失效时退回按章节和文字找 */
+            }
+          }
           try {
             await current.display(target.spineIndex);
           } catch {

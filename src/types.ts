@@ -27,7 +27,7 @@ export interface Highlight {
   bookId: BookId;
   location: BookLocation;
   text: string;
-  color: "yellow";
+  color: string;
   createdAt: number;
 }
 
