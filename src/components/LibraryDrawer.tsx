@@ -5,6 +5,7 @@ export interface LibraryBook {
   title: string;
   author: string | null;
   coverRelPath: string | null;
+  collection: string | null;
 }
 
 interface Props {

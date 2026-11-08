@@ -5,6 +5,7 @@ import TopBar, { type BoardOption } from "./components/TopBar";
 import Toolbar, { type Tool } from "./components/Toolbar";
 import CanvasBoard, { markBoardDeleted } from "./components/CanvasBoard";
 import LibraryDrawer, { type LibraryBook } from "./components/LibraryDrawer";
+import Sidebar from "./components/Sidebar";
 import ExcerptsPanel from "./components/ExcerptsPanel";
 import SearchPanel from "./components/SearchPanel";
 import ChatPanel, { type ChatTarget } from "./components/ChatPanel";
@@ -44,6 +45,7 @@ export default function App() {
   const [board, setBoard] = useState<{ id: string; name: string } | null>(null);
   const [boards, setBoards] = useState<BoardOption[]>([]);
   const [boardState, setBoardState] = useState<BoardState | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [excerptsOpen, setExcerptsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -101,6 +103,7 @@ export default function App() {
           title: b.title,
           author: b.author,
           coverRelPath: b.coverRelPath,
+          collection: b.collection,
         })),
       );
     } catch (err) {
@@ -182,7 +185,7 @@ export default function App() {
   const refreshBoards = useCallback(async () => {
     try {
       const list = await Board.list();
-      setBoards(list.map((b) => ({ id: b.id, name: b.name })));
+      setBoards(list.map((b) => ({ id: b.id, name: b.name, folder: b.folder })));
     } catch {
       /* 列表刷新失败不影响当前画布 */
     }
@@ -212,8 +215,8 @@ export default function App() {
         if (cancelled) return;
         setBoards(
           summaries.length > 0
-            ? summaries.map((b) => ({ id: b.id, name: b.name }))
-            : [{ id: target.id, name: target.name }],
+            ? summaries.map((b) => ({ id: b.id, name: b.name, folder: b.folder }))
+            : [{ id: target.id, name: target.name, folder: null }],
         );
         const ok = await openBoard(target.id);
         if (!ok && !cancelled) throw new Error("画布不存在");
@@ -282,7 +285,7 @@ export default function App() {
             await openBoard(next.id);
           } else {
             const created = await Board.create("我的画布");
-            setBoards([{ id: created.id, name: created.name }]);
+            setBoards([{ id: created.id, name: created.name, folder: null }]);
             await openBoard(created.id);
           }
           setChatTarget(null);
@@ -311,6 +314,24 @@ export default function App() {
       }),
     );
   }, []);
+
+  const setBookCollection = useCallback(
+    (bookId: string, collection: string) => {
+      void Library.setCollection(bookId, collection)
+        .then(() => refreshBooks())
+        .catch((err) => toast(`移动失败：${errorText(err)}`, "error"));
+    },
+    [refreshBooks, toast],
+  );
+
+  const setBoardFolder = useCallback(
+    (boardId: string, folder: string) => {
+      void Board.setFolder(boardId, folder)
+        .then(() => refreshBoards())
+        .catch((err) => toast(`移动失败：${errorText(err)}`, "error"));
+    },
+    [refreshBoards, toast],
+  );
 
   const openSearchHit = useCallback(
     (hit: SearchHit, occurrence: number, query: string) => {
@@ -573,6 +594,7 @@ export default function App() {
             title: first.title,
             author: first.author,
             coverRelPath: first.coverRelPath,
+            collection: first.collection,
           });
         }
       } catch (err) {
@@ -691,6 +713,8 @@ export default function App() {
           highlightCount={highlightCount}
           searchOpen={searchOpen}
           settingsOpen={settingsOpen}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onAddBook={() => void runImport()}
           onOpenBoards={() => void refreshBoards()}
           onSwitchBoard={(id) => void switchBoard(id)}
@@ -729,7 +753,7 @@ export default function App() {
           }}
         />
       )}
-      <div className="app-body">
+      <div className={`app-body ${sidebarOpen ? "has-sidebar" : ""}`}>
         <Toolbar
           tool={tool}
           onSelect={setTool}
@@ -745,6 +769,20 @@ export default function App() {
           onFitView={() => window.dispatchEvent(new CustomEvent("bookdesk:fit-view"))}
           onCreateBoard={() => void createBoard()}
         />
+        {sidebarOpen ? (
+          <Sidebar
+            books={books}
+            boards={boards}
+            activeBoardId={board?.id ?? ""}
+            onRead={(book) => void openReader(book.id)}
+            onAddToBoard={addBookToBoard}
+            onSwitchBoard={(id) => void switchBoard(id)}
+            onCreateBoard={() => void createBoard()}
+            onSetCollection={setBookCollection}
+            onSetFolder={setBoardFolder}
+            onImport={() => void runImport()}
+          />
+        ) : null}
         {board && boardState ? (
           <CanvasBoard
             key={board.id}

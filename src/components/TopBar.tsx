@@ -6,6 +6,7 @@ import {
   Highlighter,
   Library,
   Maximize2,
+  PanelLeft,
   Pencil,
   Plus,
   Search,
@@ -16,6 +17,7 @@ import {
 export interface BoardOption {
   id: string;
   name: string;
+  folder: string | null;
 }
 
 interface Props {
@@ -25,6 +27,8 @@ interface Props {
   highlightCount: number;
   searchOpen: boolean;
   settingsOpen: boolean;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
   onAddBook: () => void;
   onOpenLibrary: () => void;
   onOpenExcerpts: () => void;
@@ -46,6 +50,8 @@ export default function TopBar({
   highlightCount,
   searchOpen,
   settingsOpen,
+  sidebarOpen,
+  onToggleSidebar,
   onAddBook,
   onOpenLibrary,
   onOpenExcerpts,
@@ -104,6 +110,13 @@ export default function TopBar({
   return (
     <header className="topbar">
       <div className="topbar-left">
+        <button
+          className={`icon-button sidebar-toggle ${sidebarOpen ? "is-active" : ""}`}
+          onClick={onToggleSidebar}
+          title={sidebarOpen ? "收起侧栏" : "展开侧栏"}
+        >
+          <PanelLeft size={17} />
+        </button>
         <div className="app-mark" aria-hidden>
           <span />
           <span />

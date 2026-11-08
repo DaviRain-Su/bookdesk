@@ -24,6 +24,11 @@ func (Board) List(ctx context.Context) ([]BoardSummary, error) {
 	return listBoards()
 }
 
+// SetFolder 把画布放进文件夹；空字符串表示移出文件夹。
+func (Board) SetFolder(ctx context.Context, id, folder string) error {
+	return setBoardFolder(id, folder)
+}
+
 func (Board) Create(ctx context.Context, name string) (BoardData, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {

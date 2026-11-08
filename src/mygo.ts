@@ -49,6 +49,7 @@ export interface BoardData {
 export interface BoardSummary {
   id: string;
   name: string;
+  folder: string | null;
   updatedAt: number;
 }
 
@@ -59,6 +60,7 @@ export interface Book {
   language: string | null;
   coverRelPath: string | null;
   epubRelPath: string;
+  collection: string | null;
   importedAt: number;
 }
 
@@ -257,6 +259,10 @@ export const Library = {
   pickImage(): Promise<string> {
     return call("Library.PickImage");
   },
+  /** SetCollection 把一本书放进书架收藏；空字符串表示移出收藏。 */
+  setCollection(bookID: string, collection: string): Promise<void> {
+    return call("Library.SetCollection", bookID, collection);
+  },
 } as const;
 
 /** Notes 负责划线与卡片。 */
@@ -300,6 +306,10 @@ export const Board = {
   },
   save(board: BoardData): Promise<void> {
     return call("Board.Save", board);
+  },
+  /** SetFolder 把画布放进文件夹；空字符串表示移出文件夹。 */
+  setFolder(id: string, folder: string): Promise<void> {
+    return call("Board.SetFolder", id, folder);
   },
 } as const;
 

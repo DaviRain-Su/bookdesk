@@ -202,6 +202,11 @@ func (Library) List(ctx context.Context) ([]Book, error) {
 	return listBooks()
 }
 
+// SetCollection 把一本书放进书架收藏；空字符串表示移出收藏。
+func (Library) SetCollection(ctx context.Context, bookID, collection string) error {
+	return setBookCollection(bookID, collection)
+}
+
 func (Library) ChapterText(ctx context.Context, bookID string, spineIndex int64) (*ChapterText, error) {
 	return chapterText(bookID, spineIndex)
 }

@@ -34,6 +34,21 @@ func db() (*sqlite.DB, error) {
 	return database, nil
 }
 
+// ensureColumn 在旧库上补一列；列已经存在时什么也不做。
+func ensureColumn(d *sqlite.DB, table, column, alter string) error {
+	rows, err := d.Query(context.Background(), "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	for _, row := range rows.Values {
+		if len(row) > 1 && asString(row[1]) == column {
+			return nil
+		}
+	}
+	_, err = d.Execute(context.Background(), alter)
+	return err
+}
+
 func migrate(d *sqlite.DB) error {
 	ctx := context.Background()
 	statements := []string{
@@ -111,6 +126,14 @@ func migrate(d *sqlite.DB) error {
 		if _, err := d.Execute(ctx, sql); err != nil {
 			return err
 		}
+	}
+
+	// 书架收藏和画布文件夹是后加的列，旧库启动时补上。
+	if err := ensureColumn(d, "books", "collection", "ALTER TABLE books ADD COLUMN collection TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(d, "whiteboards", "folder", "ALTER TABLE whiteboards ADD COLUMN folder TEXT"); err != nil {
+		return err
 	}
 
 	// 中文按二元组建 FTS5 索引；建不出来时退回 instr 子串搜索。
@@ -200,7 +223,7 @@ func listBooks() ([]Book, error) {
 		return nil, err
 	}
 	rows, err := d.Query(context.Background(),
-		"SELECT id, title, author, language, cover_rel_path, epub_rel_path, imported_at FROM books ORDER BY imported_at DESC")
+		"SELECT id, title, author, language, cover_rel_path, epub_rel_path, collection, imported_at FROM books ORDER BY imported_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +236,8 @@ func listBooks() ([]Book, error) {
 			Language:     asOptString(row[3]),
 			CoverRelPath: asOptString(row[4]),
 			EpubRelPath:  asString(row[5]),
-			ImportedAt:   asInt(row[6]),
+			Collection:   asOptString(row[6]),
+			ImportedAt:   asInt(row[7]),
 		})
 	}
 	return out, nil
@@ -225,7 +249,7 @@ func getBook(id string) (*Book, error) {
 		return nil, err
 	}
 	rows, err := d.Query(context.Background(),
-		"SELECT id, title, author, language, cover_rel_path, epub_rel_path, imported_at FROM books WHERE id = ?", id)
+		"SELECT id, title, author, language, cover_rel_path, epub_rel_path, collection, imported_at FROM books WHERE id = ?", id)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +264,8 @@ func getBook(id string) (*Book, error) {
 		Language:     asOptString(row[3]),
 		CoverRelPath: asOptString(row[4]),
 		EpubRelPath:  asString(row[5]),
-		ImportedAt:   asInt(row[6]),
+		Collection:   asOptString(row[6]),
+		ImportedAt:   asInt(row[7]),
 	}, nil
 }
 
@@ -250,8 +275,22 @@ func insertBook(book Book) error {
 		return err
 	}
 	_, err = d.Execute(context.Background(),
-		"INSERT INTO books (id, title, author, language, cover_rel_path, epub_rel_path, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		book.ID, book.Title, optStringArg(book.Author), optStringArg(book.Language), optStringArg(book.CoverRelPath), book.EpubRelPath, book.ImportedAt)
+		"INSERT INTO books (id, title, author, language, cover_rel_path, epub_rel_path, collection, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		book.ID, book.Title, optStringArg(book.Author), optStringArg(book.Language), optStringArg(book.CoverRelPath), book.EpubRelPath, optStringArg(book.Collection), book.ImportedAt)
+	return err
+}
+
+func setBookCollection(bookID, collection string) error {
+	d, err := db()
+	if err != nil {
+		return err
+	}
+	var value any
+	if trimmed := strings.TrimSpace(collection); trimmed != "" {
+		value = trimmed
+	}
+	_, err = d.Execute(context.Background(),
+		"UPDATE books SET collection = ? WHERE id = ?", value, bookID)
 	return err
 }
 
@@ -820,7 +859,7 @@ func listBoards() ([]BoardSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(context.Background(), "SELECT id, name, updated_at FROM whiteboards ORDER BY updated_at DESC")
+	rows, err := d.Query(context.Background(), "SELECT id, name, folder, updated_at FROM whiteboards ORDER BY updated_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -829,10 +868,25 @@ func listBoards() ([]BoardSummary, error) {
 		out = append(out, BoardSummary{
 			ID:        asString(row[0]),
 			Name:      asString(row[1]),
-			UpdatedAt: asInt(row[2]),
+			Folder:    asOptString(row[2]),
+			UpdatedAt: asInt(row[3]),
 		})
 	}
 	return out, nil
+}
+
+func setBoardFolder(boardID, folder string) error {
+	d, err := db()
+	if err != nil {
+		return err
+	}
+	var value any
+	if trimmed := strings.TrimSpace(folder); trimmed != "" {
+		value = trimmed
+	}
+	_, err = d.Execute(context.Background(),
+		"UPDATE whiteboards SET folder = ? WHERE id = ?", value, boardID)
+	return err
 }
 
 func getBoard(id string) (*BoardData, error) {

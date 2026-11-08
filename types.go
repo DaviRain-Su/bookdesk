@@ -10,6 +10,7 @@ type Book struct {
 	Language     *string `json:"language"`
 	CoverRelPath *string `json:"coverRelPath"`
 	EpubRelPath  string  `json:"epubRelPath"`
+	Collection   *string `json:"collection"`
 	ImportedAt   int64   `json:"importedAt"`
 }
 
@@ -72,9 +73,10 @@ type BoardData struct {
 }
 
 type BoardSummary struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Folder    *string `json:"folder"`
+	UpdatedAt int64   `json:"updatedAt"`
 }
 
 type SearchHit struct {
