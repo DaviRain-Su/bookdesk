@@ -1,4 +1,4 @@
-import { BookPlus, Plus, X } from "lucide-react";
+import { BookOpen, BookPlus, Plus, X } from "lucide-react";
 
 export interface LibraryBook {
   id: string;
@@ -12,6 +12,7 @@ interface Props {
   books: LibraryBook[];
   onClose: () => void;
   onAdd: (book: LibraryBook) => void;
+  onRead: (book: LibraryBook) => void;
   onImport: () => void;
 }
 
@@ -19,7 +20,14 @@ export function coverSrc(book: LibraryBook): string | null {
   return book.coverRelPath ? `books://localhost/cover/${book.id}` : null;
 }
 
-export default function LibraryDrawer({ open, books, onClose, onAdd, onImport }: Props) {
+export default function LibraryDrawer({
+  open,
+  books,
+  onClose,
+  onAdd,
+  onRead,
+  onImport,
+}: Props) {
   return (
     <>
       <div
@@ -58,22 +66,43 @@ export default function LibraryDrawer({ open, books, onClose, onAdd, onImport }:
             books.map((book) => {
               const src = coverSrc(book);
               return (
-                <button key={book.id} className="library-item" onClick={() => onAdd(book)}>
-                  <div className="library-cover">
-                    {src ? (
-                      <img src={src} alt="" draggable={false} />
-                    ) : (
-                      <span className="library-cover-fallback">{book.title.slice(0, 1)}</span>
-                    )}
+                <div key={book.id} className="library-item">
+                  <button
+                    className="library-open"
+                    onClick={() => onRead(book)}
+                    title={`全屏阅读《${book.title}》`}
+                  >
+                    <div className="library-cover">
+                      {src ? (
+                        <img src={src} alt="" draggable={false} />
+                      ) : (
+                        <span className="library-cover-fallback">{book.title.slice(0, 1)}</span>
+                      )}
+                    </div>
+                    <div className="library-meta">
+                      <span className="library-title">{book.title}</span>
+                      <span className="library-author">{book.author || "未知作者"}</span>
+                    </div>
+                  </button>
+                  <div className="library-actions">
+                    <button
+                      className="library-action"
+                      title="全屏阅读"
+                      aria-label="全屏阅读"
+                      onClick={() => onRead(book)}
+                    >
+                      <BookOpen size={15} />
+                    </button>
+                    <button
+                      className="library-action"
+                      title="放到当前画布"
+                      aria-label="放到当前画布"
+                      onClick={() => onAdd(book)}
+                    >
+                      <Plus size={15} />
+                    </button>
                   </div>
-                  <div className="library-meta">
-                    <span className="library-title">{book.title}</span>
-                    <span className="library-author">{book.author || "未知作者"}</span>
-                  </div>
-                  <span className="library-add" title="放到画布">
-                    <Plus size={16} />
-                  </span>
-                </button>
+                </div>
               );
             })
           )}

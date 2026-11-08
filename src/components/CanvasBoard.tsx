@@ -559,14 +559,25 @@ function BoardCanvas({
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent).detail as
-        | { nodeId?: string; cfi?: string; spineIndex?: number; percent?: number }
+        | {
+            nodeId?: string;
+            bookId?: string;
+            cfi?: string;
+            spineIndex?: number;
+            percent?: number;
+          }
         | undefined;
-      if (!detail?.nodeId) return;
+      if (!detail?.cfi) return;
+      if (!detail.nodeId && !detail.bookId) return;
+      // 书卡自己翻页时带 nodeId；全屏阅读翻页只带 bookId，
+      // 这里把同一本书的书卡一起更新，回到书桌时位置就是新的。
       setNodes((nds) =>
         nds.map((n) => {
-          if (n.id !== detail.nodeId) return n;
           const data = n.data as Record<string, unknown>;
-          if (data.cfi === detail.cfi) return n;
+          const match = detail.nodeId
+            ? n.id === detail.nodeId
+            : n.type === "book" && data.bookId === detail.bookId;
+          if (!match || data.cfi === detail.cfi) return n;
           return {
             ...n,
             data: {
@@ -590,6 +601,13 @@ function BoardCanvas({
     const book = nodes.find((n) => n.type === "book" && n.selected);
     return (book?.data as { bookId?: string } | undefined)?.bookId ?? null;
   }, [nodes]);
+
+  // 菜单「显示 → 全屏阅读」优先打开当前选中的书。
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("bookdesk:active-book", { detail: { bookId: activeBookId } }),
+    );
+  }, [activeBookId]);
 
   return (
     <div className="canvas-wrap">

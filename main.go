@@ -14,6 +14,7 @@ var (
 	acpUpdateEvent      = mygo.NewEvent[AcpUpdate]("acp:update")
 	openFileEvent       = mygo.NewEvent[OpenFileEvent]("app:open-file")
 	addBookEvent        = mygo.NewEvent[struct{}]("app:add-book")
+	readerModeEvent     = mygo.NewEvent[ReaderModeEvent]("app:reader-mode")
 )
 
 var (
@@ -47,6 +48,16 @@ func migrateLegacyData() {
 	}
 }
 
+func emitReaderMode(win *mygo.Window, mode string) {
+	if win == nil {
+		win = mainWindow
+	}
+	if win == nil {
+		return
+	}
+	_ = readerModeEvent.Emit(win, ReaderModeEvent{Mode: mode})
+}
+
 func buildMenu() *mygo.Menu {
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Role: mygo.RoleAppMenu},
@@ -73,7 +84,37 @@ func buildMenu() *mygo.Menu {
 			},
 		},
 		{Role: mygo.RoleEditMenu},
-		{Role: mygo.RoleViewMenu},
+		{
+			Label: "显示",
+			Submenu: []*mygo.MenuItem{
+				{
+					ID:          "view.reader",
+					Label:       "全屏阅读",
+					Accelerator: "Cmd+Shift+R",
+					Click: func(item *mygo.MenuItem, win *mygo.Window) {
+						emitReaderMode(win, "reader")
+					},
+				},
+				{
+					ID:          "view.desk",
+					Label:       "书桌",
+					Accelerator: "Cmd+Shift+D",
+					Click: func(item *mygo.MenuItem, win *mygo.Window) {
+						emitReaderMode(win, "desk")
+					},
+				},
+				mygo.Separator(),
+				// 不再放「强制重新载入」：它的 ⌘⇧R 和「全屏阅读」冲突。
+				{Role: mygo.RoleReload},
+				{Role: mygo.RoleToggleDevTools},
+				mygo.Separator(),
+				{Role: mygo.RoleResetZoom},
+				{Role: mygo.RoleZoomIn},
+				{Role: mygo.RoleZoomOut},
+				mygo.Separator(),
+				{Role: mygo.RoleToggleFullScreen},
+			},
+		},
 		{Role: mygo.RoleWindowMenu},
 	})
 }
@@ -114,7 +155,7 @@ func onReady() {
 
 func main() {
 	mygo.App.SetName("书桌")
-	mygo.Bind(Library{}, Notes{}, Board{}, Search{}, Characters{}, Ai{})
+	mygo.Bind(Library{}, Notes{}, Board{}, Search{}, Characters{}, Reading{}, Ai{})
 	if err := mygo.Protocol.HandleFunc("books", handleBooksProtocol); err != nil {
 		log.Fatalf("注册 books 协议失败: %v", err)
 	}

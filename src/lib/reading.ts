@@ -12,17 +12,26 @@ export interface ReadingSnapshot {
 
 type Getter = () => ReadingSnapshot;
 
-const getters = new Map<string, Getter>();
+// 同一本书可能同时开着书卡和全屏阅读；后注册的（全屏）优先，
+// 它关掉后书卡的登记还在，AI 上下文不会断。
+const getters = new Map<string, Getter[]>();
 
 export function registerReadingContext(bookId: string, getter: Getter): () => void {
-  getters.set(bookId, getter);
+  const list = getters.get(bookId) ?? [];
+  list.push(getter);
+  getters.set(bookId, list);
   return () => {
-    if (getters.get(bookId) === getter) getters.delete(bookId);
+    const current = getters.get(bookId);
+    if (!current) return;
+    const index = current.lastIndexOf(getter);
+    if (index >= 0) current.splice(index, 1);
+    if (current.length === 0) getters.delete(bookId);
   };
 }
 
 export function readReadingContext(bookId: string): ReadingSnapshot | null {
-  const getter = getters.get(bookId);
+  const list = getters.get(bookId);
+  const getter = list?.[list.length - 1];
   if (!getter) return null;
   try {
     return getter();

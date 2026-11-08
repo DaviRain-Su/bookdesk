@@ -71,6 +71,16 @@ export interface BookLocation {
   charOffset: number | null;
 }
 
+/** BookProgress 是一本书的阅读位置；书卡和全屏阅读共用这一份。 */
+export interface BookProgress {
+  bookId: string;
+  cfi: string;
+  spineIndex: number;
+  percent: number;
+  chapter: string;
+  updatedAt: number;
+}
+
 export interface Card {
   id: string;
   type: string;
@@ -148,6 +158,17 @@ export interface ImportResult {
 /** OpenFileEvent 把 Finder 双击打开的文件交给前端导入。 */
 export interface OpenFileEvent {
   path: string;
+}
+
+/** ReaderModeEvent 是菜单「显示 → 全屏阅读 / 书桌」发给前端的切换指令。 */
+export interface ReaderModeEvent {
+  mode: string;
+}
+
+/** ReadingState 是启动时要恢复的阅读状态。 */
+export interface ReadingState {
+  lastMode: string;
+  lastBookId: string;
 }
 
 export interface SaveCardInput {
@@ -290,6 +311,28 @@ export const Characters = {
   },
 } as const;
 
+/**
+ * Reading 记录上次用的模式、上次读的书，以及每本书的阅读位置。
+ * 只写 settings 表，不新建数据库，也不碰 books/ 里的书。
+ */
+export const Reading = {
+  getProgress(bookID: string): Promise<BookProgress | null> {
+    return call("Reading.GetProgress", bookID);
+  },
+  getState(): Promise<ReadingState> {
+    return call("Reading.GetState");
+  },
+  saveProgress(p: BookProgress): Promise<void> {
+    return call("Reading.SaveProgress", p);
+  },
+  setLastBook(bookID: string): Promise<void> {
+    return call("Reading.SetLastBook", bookID);
+  },
+  setLastMode(mode: string): Promise<void> {
+    return call("Reading.SetLastMode", mode);
+  },
+} as const;
+
 /** Ai 是服务类型。 */
 export const Ai = {
   cancel(turnID: string): Promise<void> {
@@ -338,4 +381,5 @@ export const events = {
   acpUpdate: event<AcpUpdate>("acp:update"),
   appOpenFile: event<OpenFileEvent>("app:open-file"),
   appAddBook: event<{}>("app:add-book"),
+  appReaderMode: event<ReaderModeEvent>("app:reader-mode"),
 } as const;

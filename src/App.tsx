@@ -10,9 +10,11 @@ import SearchPanel from "./components/SearchPanel";
 import ChatPanel, { type ChatTarget } from "./components/ChatPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import LookupPanel, { type LookupRequest } from "./components/LookupPanel";
+import ReaderView, { type ReaderBook } from "./components/reader/ReaderView";
+import type { ReaderProgress } from "./components/reader/useEpubReader";
 import type { SearchHit } from "./lib/search";
 import type { Highlight } from "./types";
-import { Board, Library, Notes, events } from "./mygo";
+import { Board, Library, Notes, Reading, events } from "./mygo";
 import { parseEdges, parseNodes, parseViewport } from "./lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "./lib/reveal";
 
@@ -53,6 +55,19 @@ export default function App() {
   const [importing, setImporting] = useState<{ done: number; total: number; title: string } | null>(
     null,
   );
+  // 全屏阅读与书桌共用同一份书、划线、进度；reader 非空时盖住主区域。
+  const [reader, setReader] = useState<{
+    book: ReaderBook;
+    initialCfi: string | null;
+    initialSpineIndex: number;
+    initialPercent: number;
+  } | null>(null);
+  const [lastBookId, setLastBookId] = useState<string | null>(null);
+  const [activeBookId, setActiveBookId] = useState<string | null>(null);
+  const readerProgressRef = useRef<ReaderProgress | null>(null);
+  const openingReaderRef = useRef(false);
+  const restoredReaderRef = useRef(false);
+  const progressSaveTimers = useRef<Map<string, number>>(new Map());
   const toastTimers = useRef<number[]>([]);
 
   const toast = useCallback((message: string, kind: Toast["kind"] = "info") => {
@@ -314,6 +329,186 @@ export default function App() {
     [boardBookIds, books],
   );
 
+  const openReader = useCallback(
+    async (bookId: string, cfi?: string | null) => {
+      if (openingReaderRef.current) return;
+      const book = books.find((b) => b.id === bookId);
+      if (!book) return;
+      openingReaderRef.current = true;
+      try {
+        let initialCfi = cfi ?? null;
+        let initialSpineIndex = 0;
+        let initialPercent = 0;
+        try {
+          const progress = await Reading.getProgress(bookId);
+          initialCfi = initialCfi ?? progress?.cfi ?? null;
+          initialSpineIndex = progress?.spineIndex ?? 0;
+          initialPercent = progress?.percent ?? 0;
+        } catch {
+          /* 没有进度就从开头读 */
+        }
+        readerProgressRef.current = null;
+        setLibraryOpen(false);
+        setSearchOpen(false);
+        setSettingsOpen(false);
+        setChatTarget(null);
+        setReader({
+          book: { id: book.id, title: book.title, author: book.author },
+          initialCfi,
+          initialSpineIndex,
+          initialPercent,
+        });
+        setLastBookId(book.id);
+        void Reading.setLastMode("reader").catch(() => {});
+        void Reading.setLastBook(book.id).catch(() => {});
+      } finally {
+        openingReaderRef.current = false;
+      }
+    },
+    [books],
+  );
+
+  const closeReader = useCallback(() => {
+    if (!reader) return;
+    const progress = readerProgressRef.current;
+    readerProgressRef.current = null;
+    setReader(null);
+    void Reading.setLastMode("desk").catch(() => {});
+    if (progress?.cfi) {
+      // 等全屏阅读卸载后再通知书卡，避免两边同时跳。
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("bookdesk:sync-position", {
+            detail: { bookId: progress.bookId, cfi: progress.cfi },
+          }),
+        );
+      }, 0);
+    }
+  }, [reader]);
+
+  const handleReaderProgress = useCallback((progress: ReaderProgress) => {
+    readerProgressRef.current = progress;
+    window.dispatchEvent(
+      new CustomEvent("bookdesk:book-progress", { detail: progress }),
+    );
+  }, []);
+
+  // 书卡和全屏阅读翻页时都往这里报进度；写库前稍微合并一下。
+  useEffect(() => {
+    const timers = progressSaveTimers.current;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | {
+            bookId?: string;
+            cfi?: string;
+            spineIndex?: number;
+            percent?: number;
+            chapter?: string;
+          }
+        | undefined;
+      if (!detail?.bookId || !detail.cfi) return;
+      const bookId = detail.bookId;
+      const previous = timers.get(bookId);
+      if (previous) window.clearTimeout(previous);
+      const timer = window.setTimeout(() => {
+        timers.delete(bookId);
+        void Reading.saveProgress({
+          bookId,
+          cfi: detail.cfi ?? "",
+          spineIndex: detail.spineIndex ?? 0,
+          percent: detail.percent ?? 0,
+          chapter: detail.chapter ?? "",
+          updatedAt: 0,
+        }).catch(() => {});
+      }, 300);
+      timers.set(bookId, timer);
+    };
+    window.addEventListener("bookdesk:book-progress", handler);
+    return () => {
+      window.removeEventListener("bookdesk:book-progress", handler);
+      for (const timer of timers.values()) window.clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  // 启动时恢复上次的模式；空画布、新用户和找不到的书都留在书桌。
+  useEffect(() => {
+    if (restoredReaderRef.current) return;
+    if (!board || !boardState || books.length === 0) return;
+    restoredReaderRef.current = true;
+    void (async () => {
+      try {
+        const state = await Reading.getState();
+        if (state.lastBookId) setLastBookId(state.lastBookId);
+        if (state.lastMode !== "reader" || !state.lastBookId) return;
+        const bookExists = books.some((b) => b.id === state.lastBookId);
+        if (!boardState.stored || !bookExists) {
+          void Reading.setLastMode("desk").catch(() => {});
+          return;
+        }
+        await openReader(state.lastBookId);
+      } catch {
+        /* 状态读不到就留在书桌 */
+      }
+    })();
+  }, [board, boardState, books, openReader]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ bookId?: string | null }>).detail;
+      setActiveBookId(typeof detail?.bookId === "string" ? detail.bookId : null);
+    };
+    window.addEventListener("bookdesk:active-book", handler);
+    return () => window.removeEventListener("bookdesk:active-book", handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ bookId?: string; cfi?: string | null }>).detail;
+      if (!detail?.bookId) return;
+      void openReader(detail.bookId, detail.cfi ?? null);
+    };
+    window.addEventListener("bookdesk:open-reader", handler);
+    return () => window.removeEventListener("bookdesk:open-reader", handler);
+  }, [openReader]);
+
+  const readerTarget = useCallback(() => {
+    return activeBookId ?? lastBookId ?? boardBookIds[0] ?? books[0]?.id ?? null;
+  }, [activeBookId, lastBookId, boardBookIds, books]);
+
+  useEffect(() => {
+    const stop = events.appReaderMode.on((payload) => {
+      if (payload.mode === "reader") {
+        if (reader) return;
+        const target = readerTarget();
+        if (target) void openReader(target);
+      } else {
+        closeReader();
+      }
+    });
+    return stop;
+  }, [reader, readerTarget, openReader, closeReader]);
+
+  // 菜单里写了快捷键；这里再兜一层，网页预览里也能用。
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "r") {
+        if (reader) return;
+        event.preventDefault();
+        const target = readerTarget();
+        if (target) void openReader(target);
+      } else if (key === "d") {
+        if (!reader) return;
+        event.preventDefault();
+        closeReader();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [reader, readerTarget, openReader, closeReader]);
+
   const runImport = useCallback(
     async (paths?: string[]) => {
       try {
@@ -446,45 +641,47 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar
-        boards={boards}
-        activeBoardId={board?.id ?? ""}
-        boardName={board?.name ?? "我的画布"}
-        highlightCount={highlightCount}
-        searchOpen={searchOpen}
-        settingsOpen={settingsOpen}
-        onAddBook={() => void runImport()}
-        onOpenBoards={() => void refreshBoards()}
-        onSwitchBoard={(id) => void switchBoard(id)}
-        onCreateBoard={() => void createBoard()}
-        onRenameBoard={(id, name) => void renameBoard(id, name)}
-        onDeleteBoard={(id) => void deleteBoard(id)}
-        onOpenLibrary={() => {
-          setSearchOpen(false);
-          setSettingsOpen(false);
-          setChatTarget(null);
-          setLibraryOpen((v) => !v);
-        }}
-        onOpenExcerpts={() => {
-          setLibraryOpen(false);
-          setSearchOpen(false);
-          setSettingsOpen(false);
-          setChatTarget(null);
-          setExcerptsOpen((v) => !v);
-        }}
-        onOpenSearch={() => {
-          setLibraryOpen(false);
-          setSettingsOpen(false);
-          setChatTarget(null);
-          setSearchOpen((v) => !v);
-        }}
-        onOpenSettings={() => {
-          setLibraryOpen(false);
-          setSearchOpen(false);
-          setChatTarget(null);
-          setSettingsOpen((v) => !v);
-        }}
-      />
+      {reader ? null : (
+        <TopBar
+          boards={boards}
+          activeBoardId={board?.id ?? ""}
+          boardName={board?.name ?? "我的画布"}
+          highlightCount={highlightCount}
+          searchOpen={searchOpen}
+          settingsOpen={settingsOpen}
+          onAddBook={() => void runImport()}
+          onOpenBoards={() => void refreshBoards()}
+          onSwitchBoard={(id) => void switchBoard(id)}
+          onCreateBoard={() => void createBoard()}
+          onRenameBoard={(id, name) => void renameBoard(id, name)}
+          onDeleteBoard={(id) => void deleteBoard(id)}
+          onOpenLibrary={() => {
+            setSearchOpen(false);
+            setSettingsOpen(false);
+            setChatTarget(null);
+            setLibraryOpen((v) => !v);
+          }}
+          onOpenExcerpts={() => {
+            setLibraryOpen(false);
+            setSearchOpen(false);
+            setSettingsOpen(false);
+            setChatTarget(null);
+            setExcerptsOpen((v) => !v);
+          }}
+          onOpenSearch={() => {
+            setLibraryOpen(false);
+            setSettingsOpen(false);
+            setChatTarget(null);
+            setSearchOpen((v) => !v);
+          }}
+          onOpenSettings={() => {
+            setLibraryOpen(false);
+            setSearchOpen(false);
+            setChatTarget(null);
+            setSettingsOpen((v) => !v);
+          }}
+        />
+      )}
       <div className="app-body">
         <Toolbar
           tool={tool}
@@ -520,6 +717,17 @@ export default function App() {
         ) : (
           <div className="canvas-wrap canvas-loading">正在打开画布…</div>
         )}
+        {reader ? (
+          <ReaderView
+            key={`${reader.book.id}:${reader.initialCfi ?? "start"}`}
+            book={reader.book}
+            initialCfi={reader.initialCfi}
+            initialSpineIndex={reader.initialSpineIndex}
+            initialPercent={reader.initialPercent}
+            onClose={closeReader}
+            onProgress={handleReaderProgress}
+          />
+        ) : null}
         <LibraryDrawer
           open={libraryOpen}
           books={books}
@@ -527,6 +735,10 @@ export default function App() {
           onAdd={(book) => {
             addBookToBoard(book);
             setLibraryOpen(false);
+          }}
+          onRead={(book) => {
+            setLibraryOpen(false);
+            void openReader(book.id);
           }}
           onImport={() => void runImport()}
         />
