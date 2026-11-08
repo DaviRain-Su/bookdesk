@@ -1,0 +1,12 @@
+{
+  "name": "书桌",
+  "slug": "bookdesk",
+  "identifier": "dev.davirian.bookdesk",
+  "version": "0.1.0",
+  "bindings": "src/mygo.ts",
+  "devUrl": "http://localhost:5173",
+  "devCommand": "bun run dev:web",
+  "buildCommand": "bun run build:web",
+  "frontendDist": "dist",
+  "out": "build"
+}

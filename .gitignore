@@ -1,0 +1,14 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+.zig-cache/
+zig-out/
+.mygo/
+resources/libbookdesk.dylib
+
+# 用户的书：仓库里永远不要提交 .epub
+*.epub
+
+# macOS
+.DS_Store
