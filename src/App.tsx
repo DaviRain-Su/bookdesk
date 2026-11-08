@@ -716,6 +716,11 @@ export default function App() {
             setChatTarget(null);
             setSearchOpen((v) => !v);
           }}
+          onOpenReader={() => {
+            const target = readerTarget();
+            if (target) void openReader(target);
+          }}
+          canRead={books.length > 0}
           onOpenSettings={() => {
             setLibraryOpen(false);
             setSearchOpen(false);

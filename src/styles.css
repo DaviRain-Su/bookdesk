@@ -327,6 +327,27 @@ button:disabled {
   color: var(--ink);
 }
 
+.pill-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pill-button:disabled:hover {
+  border-color: var(--border);
+  color: var(--ink-2);
+}
+
+.reader-entry {
+  color: var(--accent);
+  border-color: #c6dbcd;
+  background: var(--accent-soft);
+}
+
+.reader-entry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .pill-button.is-active {
   background: var(--accent-soft);
   border-color: #c6dbcd;
@@ -656,8 +677,32 @@ button:disabled {
 
 .book-actions {
   display: flex;
+  align-items: center;
   gap: 2px;
   flex: 0 0 auto;
+}
+
+.book-fullscreen {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  margin-right: 4px;
+  border-radius: 7px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.book-fullscreen:hover {
+  filter: brightness(0.97);
+}
+
+.book-fullscreen:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .ghost-icon {

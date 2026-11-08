@@ -103,12 +103,13 @@ export default function BookNode({ id, data, selected }: NodeProps) {
         </div>
         <div className="book-actions">
           <button
-            className="ghost-icon"
+            className="book-fullscreen"
             title="全屏阅读（⌘⇧R）"
             onClick={openFullscreen}
             disabled={reader.status !== "ready"}
           >
-            <Maximize2 size={15} />
+            <Maximize2 size={14} />
+            <span>全屏阅读</span>
           </button>
           <button
             className={`ghost-icon ${findOpen ? "is-active" : ""}`}

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Highlighter,
   Library,
+  Maximize2,
   Pencil,
   Plus,
   Search,
@@ -29,6 +30,8 @@ interface Props {
   onOpenExcerpts: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
+  onOpenReader: () => void;
+  canRead: boolean;
   onOpenBoards: () => void;
   onSwitchBoard: (id: string) => void;
   onCreateBoard: () => void;
@@ -48,6 +51,8 @@ export default function TopBar({
   onOpenExcerpts,
   onOpenSearch,
   onOpenSettings,
+  onOpenReader,
+  canRead,
   onOpenBoards,
   onSwitchBoard,
   onCreateBoard,
@@ -203,6 +208,15 @@ export default function TopBar({
       </div>
 
       <div className="topbar-right">
+        <button
+          className="pill-button reader-entry"
+          title={canRead ? "全屏阅读当前书（⌘⇧R）" : "先添加一本书"}
+          onClick={onOpenReader}
+          disabled={!canRead}
+        >
+          <Maximize2 size={15} />
+          全屏阅读
+        </button>
         <button
           className={`pill-button ${searchOpen ? "is-active" : ""}`}
           title="跨书搜索"
