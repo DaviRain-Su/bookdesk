@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Quote, X } from "lucide-react";
+import { ActiveBookContext } from "../ActiveBookContext";
 
 export interface TextNodeData {
   cardId?: string;
@@ -8,6 +9,7 @@ export interface TextNodeData {
   body?: string;
   quote?: string;
   source?: string;
+  sourceBookId?: string | null;
   tone?: "default" | "muted" | "other-book";
   [key: string]: unknown;
 }
@@ -24,6 +26,9 @@ function deleteNode(nodeId: string) {
 
 export default function TextNode({ id, data, selected }: NodeProps) {
   const d = data as TextNodeData;
+  const activeBookId = useContext(ActiveBookContext);
+  const otherBook =
+    !!activeBookId && !!d.sourceBookId && d.sourceBookId !== activeBookId;
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -41,7 +46,7 @@ export default function TextNode({ id, data, selected }: NodeProps) {
 
   return (
     <article
-      className={`card text-card ${d.tone === "muted" ? "is-muted" : ""} ${selected ? "is-selected" : ""}`}
+      className={`card text-card ${d.tone === "muted" ? "is-muted" : ""} ${otherBook ? "is-other-book" : ""} ${selected ? "is-selected" : ""}`}
       onDoubleClick={() => {
         if (!editing) startEdit();
       }}

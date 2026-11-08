@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Highlighter, X } from "lucide-react";
+import { Highlighter, Trash2, X } from "lucide-react";
 import { Notes } from "../mygo";
 import type { Highlight } from "../types";
 import type { LibraryBook } from "./LibraryDrawer";
@@ -40,6 +40,19 @@ export default function ExcerptsPanel({ open, books, onClose, onOpenHighlight }:
       cancelled = true;
     };
   }, [open]);
+
+  const remove = async (item: Highlight) => {
+    try {
+      await Notes.deleteHighlight(item.id);
+      setItems((list) => list.filter((x) => x.id !== item.id));
+      window.dispatchEvent(
+        new CustomEvent("bookdesk:highlight-deleted", { detail: { id: item.id } }),
+      );
+      window.dispatchEvent(new Event("bookdesk:highlights-changed"));
+    } catch (err) {
+      setError(`删除摘录失败：${errorText(err)}`);
+    }
+  };
 
   const groups: { bookId: string; title: string; items: Highlight[] }[] = [];
   for (const item of items) {
@@ -96,18 +109,26 @@ export default function ExcerptsPanel({ open, books, onClose, onOpenHighlight }:
             <section key={group.bookId} className="excerpt-group">
               <h3 className="excerpt-book">{group.title}</h3>
               {group.items.map((item) => (
-                <button
-                  key={item.id}
-                  className="excerpt-row"
-                  onClick={() => onOpenHighlight(item)}
-                  title="跳到书里的位置"
-                >
-                  <span className="excerpt-text">{item.text}</span>
-                  <span className="excerpt-meta">
-                    {item.location.pageLabel ? <span>{item.location.pageLabel}</span> : null}
-                    <Highlighter size={12} />
-                  </span>
-                </button>
+                <div key={item.id} className="excerpt-item">
+                  <button
+                    className="excerpt-row"
+                    onClick={() => onOpenHighlight(item)}
+                    title="跳到书里的位置"
+                  >
+                    <span className="excerpt-text">{item.text}</span>
+                    <span className="excerpt-meta">
+                      {item.location.pageLabel ? <span>{item.location.pageLabel}</span> : null}
+                      <Highlighter size={12} />
+                    </span>
+                  </button>
+                  <button
+                    className="excerpt-delete"
+                    title="删除这条摘录"
+                    onClick={() => void remove(item)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               ))}
             </section>
           ))}

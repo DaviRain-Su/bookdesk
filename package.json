@@ -1,6 +1,7 @@
 {
   "name": "bookdesk",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "zig build && go run github.com/egoist/mygo/cmd/mygo dev .",

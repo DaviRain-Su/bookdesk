@@ -107,13 +107,6 @@ function findOccurrenceRange(doc: Document, query: string, occurrence: number): 
   return range;
 }
 
-function base64ToBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  return bytes.buffer;
-}
-
 function flattenToc(items: NavItem[] | undefined, depth = 0): TocEntry[] {
   if (!items) return [];
   const out: TocEntry[] = [];
@@ -169,6 +162,7 @@ export default function BookNode({ id, data, selected }: NodeProps) {
   const lastCfi = useRef<string | null>(null);
   const currentHref = useRef("");
   const highlightTexts = useRef<Map<string, string>>(new Map());
+  const highlightCfis = useRef<Map<string, string>>(new Map());
   const lastSelectionCfi = useRef("");
   const pendingReveal = useRef<RevealTarget | null>(null);
   const revealRef = useRef<((target: RevealTarget) => void) | null>(null);
@@ -239,6 +233,26 @@ export default function BookNode({ id, data, selected }: NodeProps) {
     return () => window.removeEventListener("bookdesk:find-in-book", handler);
   }, [id]);
 
+  // 从摘录面板删除的划线，也要把书页上的高亮一起撤掉。
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const highlightId = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (typeof highlightId !== "string") return;
+      const cfi = highlightCfis.current.get(highlightId);
+      if (!cfi) return;
+      try {
+        renditionRef.current?.annotations.remove(cfi, "highlight");
+      } catch {
+        /* 书还没渲染完时忽略 */
+      }
+      highlightTexts.current.delete(highlightId);
+      highlightCfis.current.delete(highlightId);
+      setSelection((cur) => (cur?.existingId === highlightId ? null : cur));
+    };
+    window.addEventListener("bookdesk:highlight-deleted", handler);
+    return () => window.removeEventListener("bookdesk:highlight-deleted", handler);
+  }, []);
+
   useEffect(() => {
     if (!findOpen) return;
     const q = findQuery.trim();
@@ -304,6 +318,7 @@ export default function BookNode({ id, data, selected }: NodeProps) {
     const applyHighlight = (cfiRange: string, highlightId: string) => {
       const rendition = renditionRef.current;
       if (!rendition) return;
+      highlightCfis.current.set(highlightId, cfiRange);
       rendition.annotations.highlight(
         cfiRange,
         { id: highlightId },
@@ -360,9 +375,10 @@ export default function BookNode({ id, data, selected }: NodeProps) {
 
     (async () => {
       try {
-        const b64 = await Library.epubBase64(d.bookId);
+        // 走 books:// 自定义协议，由 Zig 直接回文件；不再把整本书 base64 搬进前端。
+        const url = await Library.epubURL(d.bookId);
         if (cancelled) return;
-        const book = ePub(base64ToBuffer(b64));
+        const book = ePub(url, { openAs: "epub" });
         bookRef.current = book;
         await book.ready;
         if (cancelled) {
@@ -667,6 +683,7 @@ export default function BookNode({ id, data, selected }: NodeProps) {
             .then(() => {
               rendition.annotations.remove(current.cfiRange, "highlight");
               highlightTexts.current.delete(highlightId);
+              highlightCfis.current.delete(highlightId);
               highlightsChanged();
             })
             .catch(() => {});

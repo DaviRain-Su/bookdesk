@@ -21,6 +21,7 @@ import BookNode from "./nodes/BookNode";
 import TextNode from "./nodes/TextNode";
 import ImageNode from "./nodes/ImageNode";
 import CharacterNode from "./nodes/CharacterNode";
+import { ActiveBookContext } from "./ActiveBookContext";
 import type { Tool } from "./Toolbar";
 import { Board, Characters, Notes } from "../mygo";
 import { serializeEdges, serializeNodes, type BoardMeta } from "../lib/board";
@@ -576,8 +577,15 @@ function BoardCanvas({
 
   const selectionMode = useMemo(() => SelectionMode.Partial, []);
 
+  // 选中的书就是「当前书」；摘录卡据此决定要不要标成「他书」的蓝色。
+  const activeBookId = useMemo(() => {
+    const book = nodes.find((n) => n.type === "book" && n.selected);
+    return (book?.data as { bookId?: string } | undefined)?.bookId ?? null;
+  }, [nodes]);
+
   return (
     <div className="canvas-wrap">
+      <ActiveBookContext.Provider value={activeBookId}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -605,6 +613,7 @@ function BoardCanvas({
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#d8d4c9" />
         <ZoomBar />
       </ReactFlow>
+      </ActiveBookContext.Provider>
 
       {nodes.length === 0 ? (
         <div className="canvas-empty">
