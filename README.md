@@ -8,7 +8,7 @@
 
 - **桌面壳**：myzig（Zig 宿主 + 系统 WKWebView）。不使用 Electron、Tauri，也不额外嵌入 Chromium。
 - **前端**：React + Vite，画布用 `@xyflow/react`，阅读用 `epub.js`。
-- **数据**：Zig 服务 + SQLite。书文件、元数据、划线、卡片、画布布局都在本地，不使用网页 IndexedDB，也不依赖联网后端。
+- **数据**：Zig 服务 + SQLite。书文件、元数据、划线、卡片、画布布局都在本地，不使用网页 IndexedDB，也不依赖联网后端。跨书搜索用 FTS5：中文按单字 + 二元组建索引，英文按词。
 - **AI**：角色对话和查词交给本机已安装的 Agent：Pi、Codex 直接驱动它们自己的 CLI（原生协议），其他 Agent 走 ACP（Agent Client Protocol）；不装 Agent 时可以退回内置的 Anthropic API。
 
 ## 环境要求

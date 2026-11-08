@@ -4,6 +4,7 @@ const util = @import("util.zig");
 const types = @import("types.zig");
 
 var handle: ?mygo.SQLite = null;
+var fts_ready = false;
 
 pub fn ensureOpen() !void {
     if (handle != null) return;
@@ -47,7 +48,7 @@ pub fn transactionJson(stmts_json: []const u8) !void {
     alloc.free(res);
 }
 
-fn migrate() !void {
+fn migrate() anyerror!void {
     try execRaw(
         \\CREATE TABLE IF NOT EXISTS books (
         \\  id TEXT PRIMARY KEY,
@@ -131,6 +132,22 @@ fn migrate() !void {
     try execRaw("CREATE INDEX IF NOT EXISTS idx_characters_book ON characters(book_id)", "[]");
     // 旧版本把默认画布叫「我的白板」，跟着新说法改一次。
     try execRaw("UPDATE whiteboards SET name = '我的画布' WHERE name = '我的白板'", "[]");
+
+    // 中文按二元组建 FTS5 索引；建不出来时退回 instr 子串搜索。
+    execRaw(
+        \\CREATE VIRTUAL TABLE IF NOT EXISTS book_text_fts USING fts5(
+        \\  search_text,
+        \\  book_id UNINDEXED,
+        \\  spine_index UNINDEXED,
+        \\  tokenize = 'unicode61'
+        \\)
+    , "[]") catch return;
+    const version = getSetting(std.heap.page_allocator, "fts.version") catch null;
+    if (version == null or !std.mem.eql(u8, version.?, "2")) {
+        // 索引没建完就不要用 FTS，否则会静默漏结果。
+        rebuildFts() catch return;
+    }
+    fts_ready = true;
 }
 
 // ---------- value helpers ----------
@@ -262,17 +279,44 @@ pub const ChapterRow = struct {
 pub fn insertChapters(book_id: []const u8, chapters: []const ChapterRow) !void {
     if (chapters.len == 0) return;
     const alloc = std.heap.page_allocator;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.writer.writeAll("[");
-    for (chapters, 0..) |ch, i| {
-        if (i > 0) try out.writer.writeAll(",");
+    var first = true;
+    if (fts_ready) {
+        try out.writer.writeAll("{\"sql\":\"DELETE FROM book_text_fts WHERE book_id = ?\",\"args\":");
+        try std.json.Stringify.value(.{book_id}, .{}, &out.writer);
+        try out.writer.writeAll("}");
+        first = false;
+    }
+    for (chapters) |ch| {
+        if (!first) try out.writer.writeAll(",");
+        first = false;
         try out.writer.writeAll("{\"sql\":\"INSERT INTO book_text (book_id, spine_index, href, text) VALUES (?, ?, ?, ?)\",\"args\":");
         try std.json.Stringify.value(.{ book_id, ch.spineIndex, ch.href, ch.text }, .{}, &out.writer);
         try out.writer.writeAll("}");
+        if (fts_ready) {
+            const search = try searchTextFor(arena.allocator(), ch.text);
+            try out.writer.writeAll(",{\"sql\":\"INSERT INTO book_text_fts (search_text, book_id, spine_index) VALUES (?, ?, ?)\",\"args\":");
+            try std.json.Stringify.value(.{ search, book_id, ch.spineIndex }, .{}, &out.writer);
+            try out.writer.writeAll("}");
+        }
+        // 插件的 transaction 缓冲区是 256 KB，整本书一次提交会被截断。
+        if (out.written().len >= 128 * 1024) {
+            try out.writer.writeAll("]");
+            try transactionJson(out.written());
+            out.deinit();
+            out = .init(alloc);
+            first = true;
+            try out.writer.writeAll("[");
+        }
     }
-    try out.writer.writeAll("]");
-    try transactionJson(out.written());
+    if (!first) {
+        try out.writer.writeAll("]");
+        try transactionJson(out.written());
+    }
 }
 
 pub fn chapterText(alloc: std.mem.Allocator, book_id: []const u8, spine_index: i64) !?types.ChapterText {
@@ -291,6 +335,186 @@ pub fn chapterText(alloc: std.mem.Allocator, book_id: []const u8, spine_index: i
         .href = optString(it[1]),
         .text = asString(it[2]) orelse "",
     };
+}
+
+// ---------- full-text search ----------
+
+fn isWideCodepoint(cp: u21) bool {
+    return (cp >= 0x3040 and cp <= 0x30FF) or // 日文假名
+        (cp >= 0x3400 and cp <= 0x4DBF) or // CJK 扩展 A
+        (cp >= 0x4E00 and cp <= 0x9FFF) or // CJK 基本区
+        (cp >= 0xF900 and cp <= 0xFAFF) or // CJK 兼容区
+        (cp >= 0xAC00 and cp <= 0xD7AF) or // 韩文音节
+        (cp >= 0x20000 and cp <= 0x2FA1F); // CJK 扩展 B 及以后
+}
+
+fn isWordCodepoint(cp: u21) bool {
+    return (cp >= '0' and cp <= '9') or
+        (cp >= 'a' and cp <= 'z') or
+        (cp >= 'A' and cp <= 'Z') or
+        (cp >= 0x00C0 and cp <= 0x024F); // 带变音符号的拉丁字母
+}
+
+fn appendCodepoint(out: *std.ArrayList(u8), alloc: std.mem.Allocator, cp: u21) !void {
+    var buf: [4]u8 = undefined;
+    const n = std.unicode.utf8Encode(cp, &buf) catch return;
+    try out.appendSlice(alloc, buf[0..n]);
+}
+
+fn flushWord(out: *std.ArrayList(u8), word: *std.ArrayList(u8), alloc: std.mem.Allocator) !void {
+    if (word.items.len == 0) return;
+    try out.appendSlice(alloc, word.items);
+    try out.append(alloc, ' ');
+    word.clearRetainingCapacity();
+}
+
+fn flushWideTokens(out: *std.ArrayList(u8), wide: *std.ArrayList(u21), alloc: std.mem.Allocator) !void {
+    if (wide.items.len == 0) return;
+    // 先放单字，再放二元组：单字查询能命中，二元组之间仍然相邻。
+    for (wide.items) |cp| {
+        try appendCodepoint(out, alloc, cp);
+        try out.append(alloc, ' ');
+    }
+    if (wide.items.len >= 2) {
+        for (0..wide.items.len - 1) |i| {
+            try appendCodepoint(out, alloc, wide.items[i]);
+            try appendCodepoint(out, alloc, wide.items[i + 1]);
+            try out.append(alloc, ' ');
+        }
+    }
+    wide.clearRetainingCapacity();
+}
+
+/// 正文 → FTS5 检索文本：英文按词、CJK 按相邻二元组。
+fn searchTextFor(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    var wide: std.ArrayList(u21) = .empty;
+    defer wide.deinit(alloc);
+    var word: std.ArrayList(u8) = .empty;
+    defer word.deinit(alloc);
+
+    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (it.nextCodepoint()) |cp| {
+        if (isWideCodepoint(cp)) {
+            try flushWord(&out, &word, alloc);
+            try wide.append(alloc, cp);
+        } else if (isWordCodepoint(cp)) {
+            try flushWideTokens(&out, &wide, alloc);
+            if (cp >= 'A' and cp <= 'Z') {
+                try word.append(alloc, @intCast(cp - 'A' + 'a'));
+            } else {
+                try appendCodepoint(&word, alloc, cp);
+            }
+        } else {
+            try flushWord(&out, &word, alloc);
+            try flushWideTokens(&out, &wide, alloc);
+        }
+    }
+    try flushWord(&out, &word, alloc);
+    try flushWideTokens(&out, &wide, alloc);
+    return out.toOwnedSlice(alloc);
+}
+
+fn flushQueryPhrase(
+    parts: *std.ArrayList(u8),
+    wide: *std.ArrayList(u21),
+    alloc: std.mem.Allocator,
+) !void {
+    if (wide.items.len == 0) return;
+    if (parts.items.len > 0) try parts.append(alloc, ' ');
+    try parts.append(alloc, '"');
+    if (wide.items.len == 1) {
+        try appendCodepoint(parts, alloc, wide.items[0]);
+    } else {
+        for (0..wide.items.len - 1) |i| {
+            if (i > 0) try parts.append(alloc, ' ');
+            try appendCodepoint(parts, alloc, wide.items[i]);
+            try appendCodepoint(parts, alloc, wide.items[i + 1]);
+        }
+    }
+    try parts.append(alloc, '"');
+    wide.clearRetainingCapacity();
+}
+
+/// 纯中文查询走 FTS；中英混合或英文退回 instr 子串搜索。
+fn ftsQueryFor(alloc: std.mem.Allocator, q: []const u8) !?[]u8 {
+    var parts: std.ArrayList(u8) = .empty;
+    errdefer parts.deinit(alloc);
+    var wide: std.ArrayList(u21) = .empty;
+    defer wide.deinit(alloc);
+    var saw_wide = false;
+
+    var it = std.unicode.Utf8Iterator{ .bytes = q, .i = 0 };
+    while (it.nextCodepoint()) |cp| {
+        if (isWideCodepoint(cp)) {
+            saw_wide = true;
+            try wide.append(alloc, cp);
+        } else if (isWordCodepoint(cp)) {
+            // 中英混合查询保持原来的子串语义。
+            return null;
+        } else {
+            try flushQueryPhrase(&parts, &wide, alloc);
+        }
+    }
+    try flushQueryPhrase(&parts, &wide, alloc);
+    if (!saw_wide) return null;
+    const trimmed = std.mem.trim(u8, parts.items, " ");
+    if (trimmed.len == 0) return null;
+    return try alloc.dupe(u8, trimmed);
+}
+
+fn rebuildFts() !void {
+    const alloc = std.heap.page_allocator;
+    try execRaw("DELETE FROM book_text_fts", "[]");
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    defer out.deinit();
+    var count: usize = 0;
+    try out.writer.writeAll("[");
+
+    // 一次只取几条：SQLite 插件的返回缓冲区是 256 KB，整库一次性查会截断。
+    var last_rowid: i64 = 0;
+    while (true) {
+        const args = try util.jsonString(alloc, .{last_rowid});
+        defer alloc.free(args);
+        var parsed = try queryJson(
+            alloc,
+            "SELECT rowid, book_id, spine_index, text FROM book_text WHERE rowid > ? ORDER BY rowid LIMIT 4",
+            args,
+        );
+        defer parsed.deinit();
+        const rows = try rowsOf(&parsed);
+        if (rows.len == 0) break;
+        for (rows) |row| {
+            const it = try rowItems(row);
+            last_rowid = asInt(it[0]) orelse return error.BadDatabaseResponse;
+            const book_id = asString(it[1]) orelse continue;
+            const spine_index = asInt(it[2]) orelse continue;
+            const text = asString(it[3]) orelse continue;
+            const search = try searchTextFor(arena.allocator(), text);
+            if (count > 0) try out.writer.writeAll(",");
+            try out.writer.writeAll("{\"sql\":\"INSERT INTO book_text_fts (search_text, book_id, spine_index) VALUES (?, ?, ?)\",\"args\":");
+            try std.json.Stringify.value(.{ search, book_id, spine_index }, .{}, &out.writer);
+            try out.writer.writeAll("}");
+            count += 1;
+            if (out.written().len >= 128 * 1024) {
+                try out.writer.writeAll("]");
+                try transactionJson(out.written());
+                out.deinit();
+                out = .init(alloc);
+                count = 0;
+                try out.writer.writeAll("[");
+            }
+        }
+    }
+    if (count > 0) {
+        try out.writer.writeAll("]");
+        try transactionJson(out.written());
+    }
+    try setSetting("fts.version", "2");
 }
 
 // ---------- highlights ----------
@@ -689,14 +913,91 @@ pub const ChapterSearchRow = struct {
     text: []const u8,
 };
 
-pub fn searchChapters(alloc: std.mem.Allocator, q: []const u8, book_id: ?[]const u8) ![]ChapterSearchRow {
+const ChapterRef = struct {
+    book_id: []const u8,
+    spine_index: i64,
+};
+
+fn fetchChapter(alloc: std.mem.Allocator, ref: ChapterRef) !?ChapterSearchRow {
+    const args = try util.jsonString(alloc, .{ ref.book_id, ref.spine_index });
+    defer alloc.free(args);
+    var parsed = try queryJson(
+        alloc,
+        "SELECT href, text FROM book_text WHERE book_id = ? AND spine_index = ?",
+        args,
+    );
+    const rows = try rowsOf(&parsed);
+    if (rows.len == 0) return null;
+    const it = try rowItems(rows[0]);
+    return .{
+        .book_id = ref.book_id,
+        .spine_index = ref.spine_index,
+        .href = optString(it[0]),
+        .text = asString(it[1]) orelse "",
+    };
+}
+
+/// 先只取命中的章节 id，再逐章取正文：SQLite 插件一次返回超过 256 KB 会截断。
+fn chaptersFromRefs(
+    alloc: std.mem.Allocator,
+    parsed: *const std.json.Parsed(std.json.Value),
+) ![]ChapterSearchRow {
+    const rows = try rowsOf(parsed);
+    var out = try alloc.alloc(ChapterSearchRow, rows.len);
+    var n: usize = 0;
+    for (rows) |row| {
+        const it = try rowItems(row);
+        const ref = ChapterRef{
+            .book_id = asString(it[0]) orelse continue,
+            .spine_index = asInt(it[1]) orelse continue,
+        };
+        const ch = fetchChapter(alloc, ref) catch continue;
+        if (ch) |c| {
+            out[n] = c;
+            n += 1;
+        }
+    }
+    return out[0..n];
+}
+
+fn searchChaptersFts(
+    alloc: std.mem.Allocator,
+    fts_q: []const u8,
+    book_id: ?[]const u8,
+) ![]ChapterSearchRow {
+    var parsed: std.json.Parsed(std.json.Value) = undefined;
+    if (book_id) |bid| {
+        const args = try util.jsonString(alloc, .{ fts_q, bid });
+        defer alloc.free(args);
+        parsed = try queryJson(
+            alloc,
+            "SELECT book_id, spine_index FROM book_text_fts WHERE book_text_fts MATCH ? AND book_id = ? ORDER BY book_id, spine_index LIMIT 200",
+            args,
+        );
+    } else {
+        const args = try util.jsonString(alloc, .{fts_q});
+        defer alloc.free(args);
+        parsed = try queryJson(
+            alloc,
+            "SELECT book_id, spine_index FROM book_text_fts WHERE book_text_fts MATCH ? ORDER BY book_id, spine_index LIMIT 200",
+            args,
+        );
+    }
+    return chaptersFromRefs(alloc, &parsed);
+}
+
+fn searchChaptersInstr(
+    alloc: std.mem.Allocator,
+    q: []const u8,
+    book_id: ?[]const u8,
+) ![]ChapterSearchRow {
     var parsed: std.json.Parsed(std.json.Value) = undefined;
     if (book_id) |bid| {
         const args = try util.jsonString(alloc, .{ q, bid });
         defer alloc.free(args);
         parsed = try queryJson(
             alloc,
-            "SELECT book_id, spine_index, href, text FROM book_text WHERE instr(lower(text), lower(?)) > 0 AND book_id = ? ORDER BY book_id, spine_index LIMIT 400",
+            "SELECT book_id, spine_index FROM book_text WHERE instr(lower(text), lower(?)) > 0 AND book_id = ? ORDER BY book_id, spine_index LIMIT 200",
             args,
         );
     } else {
@@ -704,20 +1005,23 @@ pub fn searchChapters(alloc: std.mem.Allocator, q: []const u8, book_id: ?[]const
         defer alloc.free(args);
         parsed = try queryJson(
             alloc,
-            "SELECT book_id, spine_index, href, text FROM book_text WHERE instr(lower(text), lower(?)) > 0 ORDER BY book_id, spine_index LIMIT 400",
+            "SELECT book_id, spine_index FROM book_text WHERE instr(lower(text), lower(?)) > 0 ORDER BY book_id, spine_index LIMIT 200",
             args,
         );
     }
-    const rows = try rowsOf(&parsed);
-    var out = try alloc.alloc(ChapterSearchRow, rows.len);
-    for (rows, 0..) |row, i| {
-        const it = try rowItems(row);
-        out[i] = .{
-            .book_id = asString(it[0]) orelse "",
-            .spine_index = asInt(it[1]) orelse 0,
-            .href = optString(it[2]),
-            .text = asString(it[3]) orelse "",
-        };
+    return chaptersFromRefs(alloc, &parsed);
+}
+
+pub fn searchChapters(alloc: std.mem.Allocator, q: []const u8, book_id: ?[]const u8) ![]ChapterSearchRow {
+    if (fts_ready) {
+        if (try ftsQueryFor(alloc, q)) |fts_q| {
+            defer alloc.free(fts_q);
+            if (searchChaptersFts(alloc, fts_q, book_id)) |rows| {
+                return rows;
+            } else |_| {
+                // FTS 查询失败时退回子串搜索，至少还能搜到。
+            }
+        }
     }
-    return out;
+    return searchChaptersInstr(alloc, q, book_id);
 }
