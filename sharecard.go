@@ -81,6 +81,11 @@ func bookCredit(title, author string) string {
 }
 
 func layoutShareCardContent(in ShareCardInput, lim shareLayoutLimits, quoteMeasure, noteMeasure textMeasure) ShareCardContent {
+	in.Quote = sanitizeShareText(in.Quote)
+	in.Note = sanitizeShareText(in.Note)
+	in.Title = sanitizeShareText(in.Title)
+	in.Author = sanitizeShareText(in.Author)
+	in.Chapter = sanitizeShareText(in.Chapter)
 	quote := strings.TrimSpace(in.Quote)
 	if quote == "" {
 		quote = "（这段话是空的）"
@@ -125,7 +130,25 @@ func layoutShareCardContent(in ShareCardInput, lim shareLayoutLimits, quoteMeasu
 	return content
 }
 
+// sanitizeShareText 去掉零宽字符和控制字符。缺字由绘制时丢弃，不画成方框。
+func sanitizeShareText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\n' || r == '\t' {
+			b.WriteRune(r)
+			continue
+		}
+		if r < 32 || r == 0x7f || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func wrapText(text string, maxWidth float64, measure textMeasure, maxLines int) ([]string, bool) {
+	text = sanitizeShareText(text)
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 	text = strings.ReplaceAll(text, "\r", "\n")
 	if text == "" {
@@ -321,6 +344,7 @@ func layoutVerticalText(text string, maxCols, maxRunes int) ([]string, bool) {
 	if maxRunes < 1 {
 		maxRunes = 1
 	}
+	text = sanitizeShareText(text)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	text = strings.TrimSpace(text)
@@ -375,6 +399,110 @@ func layoutVerticalText(text string, maxCols, maxRunes int) ([]string, bool) {
 		out[i] = string(c)
 	}
 	return out, truncated
+}
+
+// verticalPiece 是竖排里的一块：一组要旋转的拉丁字母，或一个直立的字。
+type verticalPiece struct {
+	Text     string
+	Cells    int
+	Latin    bool
+	Form     rune
+	TopRight bool
+}
+
+func groupVerticalColumn(col string) []verticalPiece {
+	rs := []rune(col)
+	var out []verticalPiece
+	for i := 0; i < len(rs); {
+		if n := latinRunLength(rs[i:]); n > 0 {
+			out = append(out, verticalPiece{Text: string(rs[i : i+n]), Cells: n, Latin: true})
+			i += n
+			continue
+		}
+		r := rs[i]
+		piece := verticalPiece{Text: string(r), Cells: 1, Form: verticalPresentationForm(r), TopRight: isVerticalSentencePunct(r)}
+		out = append(out, piece)
+		i++
+	}
+	return out
+}
+
+func latinRunLength(rs []rune) int {
+	if len(rs) == 0 || !isVerticalLatinRune(rs[0]) {
+		return 0
+	}
+	n := 0
+	hasWord := false
+	for n < len(rs) && isVerticalLatinRune(rs[n]) {
+		if isShareWordRune(rs[n]) && rs[n] != '-' && rs[n] != '\'' && rs[n] != '’' {
+			hasWord = true
+		}
+		n++
+	}
+	if !hasWord {
+		return 0
+	}
+	return n
+}
+
+func isVerticalLatinRune(r rune) bool {
+	if isShareWordRune(r) || r == ' ' {
+		return true
+	}
+	switch r {
+	case '.', ',', ';', ':', '!', '?', '\'', '"', '’', '“', '”':
+		return true
+	default:
+		return false
+	}
+}
+
+func verticalPresentationForm(r rune) rune {
+	switch r {
+	case '「':
+		return '﹁'
+	case '」':
+		return '﹂'
+	case '『':
+		return '﹃'
+	case '』':
+		return '﹄'
+	case '（', '(':
+		return '︵'
+	case '）', ')':
+		return '︶'
+	case '《':
+		return '︽'
+	case '》':
+		return '︾'
+	case '〈':
+		return '︿'
+	case '〉':
+		return '﹀'
+	case '【', '[', '［':
+		return '︻'
+	case '】', ']', '］':
+		return '︼'
+	case '〔':
+		return '︹'
+	case '〕':
+		return '︺'
+	case '｛', '{':
+		return '︷'
+	case '｝', '}':
+		return '︸'
+	default:
+		return 0
+	}
+}
+
+func isVerticalSentencePunct(r rune) bool {
+	switch r {
+	case '。', '、', '，', '．', '.', '；', '：', '！', '？', '!', '?', ';', ':', '…':
+		return true
+	default:
+		return false
+	}
 }
 
 func applyVerticalEllipsis(cols [][]rune, maxCols, maxRunes int) [][]rune {

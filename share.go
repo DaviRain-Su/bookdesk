@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -100,13 +102,39 @@ func saveExportFile(ctx context.Context, title, name, message, filterName, ext s
 	if path == "" {
 		return ShareFileResult{Cancelled: true}, nil
 	}
-	if !strings.HasSuffix(strings.ToLower(path), "."+ext) {
-		path += "." + ext
+	path, err = finalizeSavePath(path, ext)
+	if err != nil {
+		return ShareFileResult{}, err
 	}
 	if err := writeFile(path, data); err != nil {
 		return ShareFileResult{}, err
 	}
 	return ShareFileResult{Path: path}, nil
+}
+
+// finalizeSavePath 在用户删掉扩展名时补上。补出来的路径如果已经有文件，就拒绝覆盖：
+// 保存框只对用户看到的那个名字问过要不要替换。
+func finalizeSavePath(path, ext string) (string, error) {
+	ext = strings.TrimPrefix(strings.ToLower(ext), ".")
+	if ext == "" {
+		return path, nil
+	}
+	appended := false
+	if !strings.HasSuffix(strings.ToLower(path), "."+ext) {
+		path += "." + ext
+		appended = true
+	}
+	if !appended {
+		return path, nil
+	}
+	_, err := os.Stat(path)
+	if err == nil {
+		return "", fmt.Errorf("已经有同名文件 %s，没有覆盖", path)
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	return path, nil
 }
 
 func defaultSavePath(name string) string {

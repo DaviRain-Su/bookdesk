@@ -121,6 +121,95 @@ func TestWrapTruncatesLongQuote(t *testing.T) {
 	}
 }
 
+func TestSanitizeShareTextAndVerticalPieces(t *testing.T) {
+	if got := sanitizeShareText("你\u200b\u200c\u200d\ufeff好\u0000\u007f"); got != "你好" {
+		t.Fatalf("sanitize = %q", got)
+	}
+	lines, _ := wrapText("你\u200b好", 10, unitMeasure, 0)
+	if strings.Join(lines, "") != "你好" {
+		t.Fatalf("wrapped = %#v", lines)
+	}
+	cols, _ := layoutVerticalText("a\u0007b\u200b", 1, 4)
+	if len(cols) != 1 || cols[0] != "ab" {
+		t.Fatalf("vertical sanitize = %#v", cols)
+	}
+
+	pieces := groupVerticalColumn("「Hello（世界）。")
+	if len(pieces) != 7 {
+		t.Fatalf("pieces = %+v", pieces)
+	}
+	if pieces[0].Latin || pieces[0].Form != '﹁' || pieces[0].Text != "「" {
+		t.Fatalf("open quote = %+v", pieces[0])
+	}
+	if !pieces[1].Latin || pieces[1].Text != "Hello" || pieces[1].Cells != 5 {
+		t.Fatalf("latin = %+v", pieces[1])
+	}
+	if pieces[2].Form != '︵' {
+		t.Fatalf("paren = %+v", pieces[2])
+	}
+	if pieces[3].Text != "世" || pieces[4].Text != "界" || pieces[5].Form != '︶' {
+		t.Fatalf("cjk = %+v %+v %+v", pieces[3], pieces[4], pieces[5])
+	}
+	if !pieces[6].TopRight || pieces[6].Text != "。" {
+		t.Fatalf("stop = %+v", pieces[6])
+	}
+	parens := groupVerticalColumn("（）")
+	if parens[0].Form != '︵' || parens[1].Form != '︶' {
+		t.Fatalf("parens = %+v", parens)
+	}
+}
+
+func TestMissingGlyphsAreNotMeasured(t *testing.T) {
+	fonts, err := loadShareFonts()
+	if err != nil {
+		t.Skip(err)
+	}
+	faces, err := fonts.open(40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer faces.Close()
+	if faces.Width("\u200b\ufeff") != 0 {
+		t.Fatal("zero-width characters took space")
+	}
+	plain := faces.Width("AB")
+	withGap := faces.Width("A\u200b\U0001F600B")
+	if withGap != plain {
+		t.Fatalf("emoji or zero-width changed width: plain %v with %v", plain, withGap)
+	}
+}
+
+func TestLongChapterStaysInsideMargin(t *testing.T) {
+	if _, err := loadShareFonts(); err != nil {
+		t.Skip(err)
+	}
+	raw, err := renderShareCard(ShareCardInput{
+		Quote:    "短",
+		Title:    "书",
+		Author:   "作者",
+		Chapter:  strings.Repeat("很长的章节名称", 40),
+		Template: "light",
+		Ratio:    "square",
+		Color:    "yellow",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := img.Bounds()
+	for y := 16; y < b.Dy(); y++ {
+		for x := b.Dx() - 24; x < b.Dx(); x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if r>>8 < 230 || g>>8 < 220 || bl>>8 < 200 {
+				t.Fatalf("chapter ran to the edge at %d,%d (%d,%d,%d)", x, y, r>>8, g>>8, bl>>8)
+			}
+		}
+	}
+}
+
 func TestVerticalColumnsAndTruncation(t *testing.T) {
 	cols, truncated := layoutVerticalText("天地玄黄宇宙洪荒", 2, 4)
 	if truncated {

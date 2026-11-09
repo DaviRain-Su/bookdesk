@@ -5,6 +5,7 @@ import (
 	"html"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -275,17 +276,16 @@ footer p { margin: 0; }
 `
 
 func renderShareMarkdown(book Book, passages []exportedPassage, when time.Time) string {
-	title := strings.TrimSpace(book.Title)
+	title := markdownInline(strings.TrimSpace(book.Title))
 	if title == "" {
 		title = "未命名书籍"
 	}
-	title = strings.ReplaceAll(title, "\n", " ")
 	var b strings.Builder
 	b.WriteString("# ")
 	b.WriteString(title)
 	b.WriteString("\n\n")
-	if author := exportAuthor(book); author != "" {
-		b.WriteString(strings.ReplaceAll(author, "\n", " "))
+	if author := markdownBlock(exportAuthor(book)); author != "" {
+		b.WriteString(author)
 		b.WriteString("\n\n")
 	}
 	b.WriteString("这份摘录由书桌（bookdesk）在本机导出。没有账号，没有追踪，未勾选的笔记不会出现在这里。\n\n")
@@ -296,18 +296,22 @@ func renderShareMarkdown(book Book, passages []exportedPassage, when time.Time) 
 	}
 	for _, passage := range passages {
 		b.WriteString("---\n\n")
-		for _, line := range strings.Split(passage.Quote, "\n") {
+		quote := markdownBlock(passage.Quote)
+		if quote == "" {
+			quote = "（这段话是空的）"
+		}
+		for _, line := range strings.Split(quote, "\n") {
 			b.WriteString("> ")
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
-		if passage.Chapter != "" {
-			b.WriteString(passage.Chapter)
+		if chapter := markdownBlock(passage.Chapter); chapter != "" {
+			b.WriteString(chapter)
 			b.WriteString("\n\n")
 		}
-		if strings.TrimSpace(passage.Note) != "" {
-			b.WriteString(passage.Note)
+		if note := markdownBlock(passage.Note); note != "" {
+			b.WriteString(note)
 			b.WriteString("\n\n")
 		}
 	}
@@ -317,6 +321,79 @@ func renderShareMarkdown(book Book, passages []exportedPassage, when time.Time) 
 	return b.String()
 }
 
+// markdownInline 把一段文字收成一行，并让 HTML 和 Markdown 链接失效。
+// 书名、作者、章节、引文、笔记都可能来自 EPUB 或读者粘贴的内容，不能原样写进会被 Jekyll / kramdown 执行的文件。
+func markdownInline(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return markdownSafeLine(strings.TrimSpace(s))
+}
+
+// markdownBlock 按行中和。行首的 #、---、列表和引用不会变成新的标题或分隔线。
+func markdownBlock(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
+	s = strings.ReplaceAll(s, "\r", "\n")
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = markdownSafeLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func markdownSafeLine(line string) string {
+	var b strings.Builder
+	for _, r := range line {
+		switch r {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		case '"':
+			b.WriteString("&quot;")
+		case '\\', '`', '*', '_', '[', ']', '(', ')', '!':
+			// 反斜杠让链接、图片和强调失效。尖括号改成实体，避免 kramdown 把 \< 还原成原始标签。
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return escapeMarkdownBlockStart(b.String())
+}
+
+// escapeMarkdownBlockStart 在行首的块标记前加反斜杠，避免 #、---、列表和引用改变文档结构。
+func escapeMarkdownBlockStart(line string) string {
+	i := 0
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	if i >= len(line) {
+		return line
+	}
+	rest := line[i:]
+	if rest[0] == '#' || rest[0] == '-' || rest[0] == '+' || rest[0] == '*' || rest[0] == '>' || rest[0] == '=' || rest[0] == '|' || rest[0] == '~' || leadingOrderedList(rest) {
+		return line[:i] + `\` + rest
+	}
+	return line
+}
+
+func leadingOrderedList(s string) bool {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 || i >= len(s) {
+		return false
+	}
+	return s[i] == '.' || s[i] == ')'
+}
+
 func exportBaseName(title string) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -324,8 +401,7 @@ func exportBaseName(title string) string {
 	}
 	var b strings.Builder
 	for _, r := range title {
-		if r < 32 || strings.ContainsRune(`\/:*?"<>|`, r) {
-			b.WriteRune(' ')
+		if isUnsafeFilenameRune(r) {
 			continue
 		}
 		b.WriteRune(r)
@@ -334,11 +410,94 @@ func exportBaseName(title string) string {
 	if name == "" {
 		name = "book"
 	}
-	if utf8.RuneCountInString(name) > 40 {
-		rs := []rune(name)
-		name = string(rs[:40])
+	return truncateGraphemes(name, 40)
+}
+
+func isUnsafeFilenameRune(r rune) bool {
+	if r < 32 || r == 0x7f || r == 0x200b {
+		return true
 	}
-	return name
+	if r >= 0x202a && r <= 0x202e {
+		return true
+	}
+	if r >= 0x2066 && r <= 0x2069 {
+		return true
+	}
+	return strings.ContainsRune(`\/:*?"<>|`, r)
+}
+
+// truncateGraphemes 按字形簇截断，不把组合字符从基字上撕开。
+func truncateGraphemes(s string, max int) string {
+	if max <= 0 || s == "" {
+		return ""
+	}
+	n := 0
+	i := 0
+	for i < len(s) && n < max {
+		w := graphemeLen(s[i:])
+		if w <= 0 {
+			break
+		}
+		i += w
+		n++
+	}
+	return s[:i]
+}
+
+func graphemeLen(s string) int {
+	r, size := utf8.DecodeRuneInString(s)
+	if r == utf8.RuneError && size == 0 {
+		return 0
+	}
+	if r == '\r' && strings.HasPrefix(s[size:], "\n") {
+		return size + 1
+	}
+	i := size
+	for i < len(s) && isGraphemeContinue(runeAt(s[i:])) {
+		_, w := utf8.DecodeRuneInString(s[i:])
+		i += w
+		if i > len(s) {
+			break
+		}
+	}
+	// 零宽连接符后面的字和它的组合标记仍算同一个簇（比如带连接符的表情）。
+	if i < len(s) {
+		prev, _ := utf8.DecodeLastRuneInString(s[:i])
+		next, w := utf8.DecodeRuneInString(s[i:])
+		if prev == 0x200d && next != utf8.RuneError {
+			i += w
+			for i < len(s) && isGraphemeContinue(runeAt(s[i:])) {
+				_, ww := utf8.DecodeRuneInString(s[i:])
+				i += ww
+			}
+		}
+	}
+	if isRegionalIndicator(r) && i < len(s) {
+		next, w := utf8.DecodeRuneInString(s[i:])
+		if isRegionalIndicator(next) {
+			i += w
+		}
+	}
+	return i
+}
+
+func runeAt(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
+}
+
+func isGraphemeContinue(r rune) bool {
+	if unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc) {
+		return true
+	}
+	if r == 0x200d || (r >= 0xfe00 && r <= 0xfe0f) || (r >= 0xe0100 && r <= 0xe01ef) {
+		return true
+	}
+	return r >= 0x1f3fb && r <= 0x1f3ff
+}
+
+func isRegionalIndicator(r rune) bool {
+	return r >= 0x1f1e6 && r <= 0x1f1ff
 }
 
 func loadBookShare(bookID string) (Book, []BookShareItem, error) {

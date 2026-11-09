@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
@@ -211,30 +212,31 @@ func (s *shareFaces) Close() {
 	}
 }
 
-func (s *shareFaces) faceFor(r rune) font.Face {
+func (s *shareFaces) faceFor(r rune) (font.Face, bool) {
 	for _, face := range s.faces {
 		if _, ok := face.GlyphAdvance(r); ok {
-			return face
+			return face, true
 		}
 	}
-	return s.faces[0]
+	return nil, false
 }
 
 func (s *shareFaces) Width(text string) float64 {
+	text = sanitizeShareText(text)
 	width := fixed.Int26_6(0)
 	var prev font.Face
 	var prevR rune
 	for _, r := range text {
-		face := s.faceFor(r)
+		face, ok := s.faceFor(r)
+		if !ok {
+			continue
+		}
 		if prev == face {
 			width += face.Kern(prevR, r)
 		}
 		adv, ok := face.GlyphAdvance(r)
 		if !ok || adv <= 0 {
-			adv = fixed.I(int(s.size * 0.5))
-			if adv <= 0 {
-				adv = fixed.I(8)
-			}
+			continue
 		}
 		width += adv
 		prev, prevR = face, r
@@ -445,8 +447,11 @@ func paintHorizontalCard(img *image.RGBA, content ShareCardContent, pal sharePal
 	metaLH := mFace.lineHeight(8)
 	creditBaseline := ruleY - 18
 	if content.Chapter != "" {
-		drawText(img, mFace, pal.muted, content.Chapter, padX, creditBaseline)
-		creditBaseline -= metaLH
+		ch, _ := wrapText(content.Chapter, float64(w-padX*2), mFace.Width, 1)
+		if len(ch) > 0 {
+			drawText(img, mFace, pal.muted, ch[0], padX, creditBaseline)
+			creditBaseline -= metaLH
+		}
 	}
 	creditLines, _ := wrapText(content.Credit, float64(w-padX*2), mFace.Width, 2)
 	for i := len(creditLines) - 1; i >= 0; i-- {
@@ -472,22 +477,10 @@ func paintVerticalCard(img *image.RGBA, content ShareCardContent, pal sharePalet
 	colPitch := 64
 	top := 72
 	right := w - 86
-	qa := qFace.ascent()
-	for i, col := range content.QuoteColumns {
-		x := right - (i+1)*colPitch
-		for j, r := range []rune(col) {
-			drawText(img, qFace, pal.ink, string(r), x, top+qa+j*qLH)
-		}
-	}
+	paintVerticalColumns(img, qFace, pal.ink, content.QuoteColumns, right, top, colPitch, qLH, qFace.ascent())
 	if content.IncludeNote && len(content.NoteColumns) > 0 {
 		noteRight := right - len(content.QuoteColumns)*colPitch - 36
-		na := nFace.ascent()
-		for i, col := range content.NoteColumns {
-			x := noteRight - (i+1)*colPitch
-			for j, r := range []rune(col) {
-				drawText(img, nFace, pal.noteInk, string(r), x, top+na+j*nLH)
-			}
-		}
+		paintVerticalColumns(img, nFace, pal.noteInk, content.NoteColumns, noteRight, top, colPitch, nLH, nFace.ascent())
 	}
 
 	seal := 58
@@ -537,16 +530,108 @@ func fillRect(img *image.RGBA, x0, y0, x1, y1 int, c color.RGBA) {
 	draw.Draw(img, image.Rect(x0, y0, x1, y1), image.NewUniform(c), image.Point{}, draw.Src)
 }
 
+func paintVerticalColumns(img *image.RGBA, faces *shareFaces, col color.Color, columns []string, right, top, colPitch, lineH, ascent int) {
+	for i, column := range columns {
+		x := right - (i+1)*colPitch
+		row := 0
+		for _, piece := range groupVerticalColumn(column) {
+			if piece.Latin {
+				drawRotatedLatin(img, faces, col, piece.Text, x, top+row*lineH, colPitch, piece.Cells*lineH, ascent)
+				row += piece.Cells
+				continue
+			}
+			r, _ := utf8.DecodeRuneInString(piece.Text)
+			drawR := r
+			if piece.Form != 0 {
+				if _, ok := faces.faceFor(piece.Form); ok {
+					drawR = piece.Form
+				}
+			}
+			dx, dy := 0, 0
+			if piece.TopRight && drawR == r {
+				dx = colPitch / 3
+				dy = -lineH / 3
+			}
+			if _, ok := faces.faceFor(drawR); ok {
+				drawText(img, faces, col, string(drawR), x+dx, top+ascent+row*lineH+dy)
+			}
+			row += piece.Cells
+		}
+	}
+}
+
+// drawRotatedLatin 把一串拉丁字母顺时针转 90 度，竖排里就能从上往下读，而不是一个字母直立一格。
+func drawRotatedLatin(img *image.RGBA, faces *shareFaces, col color.Color, text string, cellX, cellTop, cellW, cellH, ascent int) {
+	text = strings.TrimSpace(sanitizeShareText(text))
+	if text == "" || cellW <= 0 || cellH <= 0 {
+		return
+	}
+	width := int(faces.Width(text)) + 2
+	height := faces.lineHeight(0)
+	if width < 2 {
+		width = 2
+	}
+	if height < ascent+2 {
+		height = ascent + 2
+	}
+	tmp := image.NewRGBA(image.Rect(0, 0, width, height))
+	drawText(tmp, faces, col, text, 1, ascent)
+	// 顺时针 90°：词首到列顶，字的上沿朝右，基线留在左侧。
+	originY := cellTop
+	rotW := height
+	originX := cellX + (cellW-rotW)/2
+	if originX < cellX {
+		originX = cellX
+	}
+	for sy := 0; sy < height; sy++ {
+		for sx := 0; sx < width; sx++ {
+			px := tmp.RGBAAt(sx, sy)
+			if px.A == 0 {
+				continue
+			}
+			dx := originX + (height - 1 - sy)
+			dy := originY + sx
+			if dy >= cellTop+cellH {
+				continue
+			}
+			blendPixel(img, dx, dy, px)
+		}
+	}
+}
+
+func blendPixel(img *image.RGBA, x, y int, src color.RGBA) {
+	if !image.Pt(x, y).In(img.Bounds()) || src.A == 0 {
+		return
+	}
+	if src.A == 255 {
+		img.SetRGBA(x, y, src)
+		return
+	}
+	dst := img.RGBAAt(x, y)
+	a := uint32(src.A)
+	inv := 255 - a
+	img.SetRGBA(x, y, color.RGBA{
+		R: uint8((uint32(src.R)*a + uint32(dst.R)*inv) / 255),
+		G: uint8((uint32(src.G)*a + uint32(dst.G)*inv) / 255),
+		B: uint8((uint32(src.B)*a + uint32(dst.B)*inv) / 255),
+		A: 255,
+	})
+}
+
 func drawText(img *image.RGBA, faces *shareFaces, col color.Color, text string, x, baseline int) {
 	if text == "" || faces == nil || len(faces.faces) == 0 {
 		return
 	}
+	text = sanitizeShareText(text)
 	dot := fixed.P(x, baseline)
 	var prev font.Face
 	var prevR rune
 	src := image.NewUniform(col)
 	for _, r := range text {
-		face := faces.faceFor(r)
+		face, ok := faces.faceFor(r)
+		if !ok {
+			continue
+		}
 		if prev == face {
 			dot.X += face.Kern(prevR, r)
 		}

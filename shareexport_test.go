@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/plugins/sqlite"
 )
@@ -133,6 +135,131 @@ func TestExportHTMLAndMarkdownPrivacy(t *testing.T) {
 	assertNoExternalResources(t, notedHTML)
 }
 
+func TestMarkdownNeutralizesActivePayloads(t *testing.T) {
+	when := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+	payloads := []string{
+		`<script>alert(1)</script>`,
+		`"><svg onload=alert(1)>`,
+		`<style>@import url(http://evil.test/a.css)></style>`,
+		`<a href="https://evil.test/x">x</a>`,
+		`<iframe src="https://evil.test/f"></iframe>`,
+		`![](https://evil.test/pixel.gif)`,
+		`[click](https://evil.test/phish)`,
+	}
+	for _, payload := range payloads {
+		book := Book{ID: "b", Title: payload, Author: strPtr(payload)}
+		items := []BookShareItem{{
+			ID:      "hl:1",
+			Quote:   payload,
+			Chapter: payload,
+			Note:    payload,
+			Color:   "yellow",
+		}}
+		_, md := renderBookExport(book, items, []BookExportChoice{{ID: "hl:1", IncludeNote: true}}, when)
+		for _, raw := range []string{"<script", "<svg", "<style", "<a ", "<iframe", "![](", "](http", "](https", "url("} {
+			if strings.Contains(md, raw) {
+				t.Fatalf("payload %q left %q in markdown:\n%s", payload, raw, md)
+			}
+		}
+	}
+
+	book := Book{ID: "b", Title: "书名", Author: strPtr("# 作者\n---")}
+	items := []BookShareItem{{
+		ID:      "hl:1",
+		Quote:   "# 不是标题\n---",
+		Chapter: "---",
+		Note:    "# secret\n---\n![](https://evil.test/pixel.gif)",
+		Color:   "yellow",
+	}}
+	_, md := renderBookExport(book, items, []BookExportChoice{{ID: "hl:1", IncludeNote: true}}, when)
+	rules, headings := 0, 0
+	for _, line := range strings.Split(md, "\n") {
+		if strings.TrimSpace(line) == "---" {
+			rules++
+		}
+		if strings.HasPrefix(line, "#") {
+			headings++
+		}
+	}
+	if headings != 1 || rules != 2 {
+		t.Fatalf("headings=%d rules=%d\n%s", headings, rules, md)
+	}
+	if strings.Contains(md, "![](") || strings.Contains(md, "<script") {
+		t.Fatalf("note still active:\n%s", md)
+	}
+}
+
+func TestHTMLEscapesNoteChapterAuthorAndNoReferrer(t *testing.T) {
+	when := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+	author := `<script>author</script>`
+	book := Book{ID: "b", Title: "书", Author: &author}
+	items := []BookShareItem{{
+		ID:      "hl:1",
+		Quote:   "引文",
+		Chapter: `<iframe src="https://evil.test/f"></iframe>`,
+		Note:    `<a href="https://evil.test/n">note</a>`,
+		Color:   "blue",
+	}}
+	doc, _ := renderBookExport(book, items, []BookExportChoice{{ID: "hl:1", IncludeNote: true}}, when)
+	if !strings.Contains(doc, `<meta name="referrer" content="no-referrer">`) {
+		t.Fatal("missing no-referrer")
+	}
+	if strings.Contains(doc, "<script>") || strings.Contains(doc, "<iframe") || strings.Contains(doc, "<a ") {
+		t.Fatalf("raw tag in html:\n%s", doc)
+	}
+	if !strings.Contains(doc, "&lt;script&gt;author") {
+		t.Fatal("author was not escaped")
+	}
+	if !strings.Contains(doc, "&lt;iframe") {
+		t.Fatal("chapter was not escaped")
+	}
+	if !strings.Contains(doc, "&lt;a href=") {
+		t.Fatal("note was not escaped")
+	}
+}
+
+func TestExportBaseNameAndSavePath(t *testing.T) {
+	got := exportBaseName("书\u202e\u202a\u2066\u2069\u200b\u007f名")
+	if got != "书名" {
+		t.Fatalf("sanitized = %q", got)
+	}
+	if exportBaseName("\u202e\u200b\u007f") != "book" {
+		t.Fatal("empty name should fall back")
+	}
+	want := strings.Repeat("e\u0301", 40)
+	if exportBaseName(strings.Repeat("e\u0301", 41)) != want {
+		t.Fatalf("grapheme truncation = %q", exportBaseName(strings.Repeat("e\u0301", 41)))
+	}
+	if utf8.RuneCountInString(want) != 80 {
+		t.Fatal("test setup")
+	}
+	if utf8.RuneCountInString(exportBaseName(strings.Repeat("书", 45))) != 40 {
+		t.Fatal("cjk truncation")
+	}
+
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "notes.html")
+	if err := os.WriteFile(existing, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finalizeSavePath(filepath.Join(dir, "notes"), "html"); err == nil {
+		t.Fatal("appending the extension overwrote an existing file")
+	}
+	data, err := os.ReadFile(existing)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("existing file changed: %q %v", data, err)
+	}
+	gotPath, err := finalizeSavePath(existing, "html")
+	if err != nil || gotPath != existing {
+		t.Fatalf("confirmed path = %q %v", gotPath, err)
+	}
+	fresh := filepath.Join(dir, "new")
+	gotPath, err = finalizeSavePath(fresh, "HTML")
+	if err != nil || gotPath != fresh+".HTML" && gotPath != fresh+".html" {
+		t.Fatalf("fresh = %q %v", gotPath, err)
+	}
+}
+
 func assertNoExternalResources(t *testing.T, doc string) {
 	t.Helper()
 	lower := strings.ToLower(doc)
@@ -252,6 +379,165 @@ func TestPageLabelSurvivesAndOldDatabaseGainsTheColumn(t *testing.T) {
 		t.Fatal("select all did not keep the note private")
 	}
 	assertNoExternalResources(t, doc)
+}
+
+func TestOldMainSchemaMigratesTwiceWithoutLosingCards(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "bookdesk.db")
+	raw, err := sqlite.Open(context.Background(), dbPath, sqlite.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 964ed37 跑完迁移之后的表：有收藏和画布文件夹，没有章节名列。
+	statements := []string{
+		`CREATE TABLE books (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  author TEXT,
+  language TEXT,
+  cover_rel_path TEXT,
+  epub_rel_path TEXT NOT NULL,
+  imported_at INTEGER NOT NULL,
+  collection TEXT
+)`,
+		`CREATE TABLE book_text (
+  book_id TEXT NOT NULL,
+  spine_index INTEGER NOT NULL,
+  href TEXT,
+  text TEXT NOT NULL,
+  PRIMARY KEY (book_id, spine_index)
+)`,
+		`CREATE TABLE highlights (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL,
+  cfi TEXT,
+  spine_index INTEGER NOT NULL DEFAULT 0,
+  href TEXT,
+  char_offset INTEGER,
+  text TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT 'yellow',
+  created_at INTEGER NOT NULL
+)`,
+		`CREATE TABLE cards (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  title TEXT,
+  body TEXT,
+  quote TEXT,
+  quote_book_id TEXT,
+  quote_cfi TEXT,
+  quote_spine_index INTEGER,
+  quote_href TEXT,
+  quote_char_offset INTEGER,
+  image_rel_path TEXT,
+  source_book_id TEXT,
+  character_name TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)`,
+		`CREATE TABLE whiteboards (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  viewport_json TEXT NOT NULL DEFAULT '{}',
+  nodes_json TEXT NOT NULL DEFAULT '[]',
+  edges_json TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL,
+  folder TEXT
+)`,
+		`CREATE TABLE characters (
+  id TEXT PRIMARY KEY,
+  book_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  image_rel_path TEXT,
+  created_at INTEGER NOT NULL
+)`,
+		`CREATE TABLE settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+)`,
+		"CREATE INDEX idx_highlights_book ON highlights(book_id)",
+		"CREATE INDEX idx_cards_source ON cards(source_book_id)",
+		"CREATE INDEX idx_characters_book ON characters(book_id)",
+		`INSERT INTO books (id, title, author, language, cover_rel_path, epub_rel_path, imported_at, collection)
+VALUES ('b1', '旧书', '旧作者', 'zh', NULL, 'books/b1/book.epub', 3, '收藏')`,
+		`INSERT INTO highlights (id, book_id, cfi, spine_index, href, char_offset, text, color, created_at)
+VALUES ('hl-old', 'b1', 'cfi-old', 1, 'ch.html', 4, '旧划线还在', 'green', 10)`,
+		`INSERT INTO cards (id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at)
+VALUES ('card-old', 'text', '标题', '旧笔记还在', '旧摘录还在', 'b1', NULL, 1, NULL, NULL, NULL, 'b1', NULL, 11, 12)`,
+	}
+	for _, sql := range statements {
+		if _, err := raw.Execute(context.Background(), sql); err != nil {
+			t.Fatalf("old schema: %v\n%s", err, sql)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func() {
+		t.Helper()
+		books, err := listBooks()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(books) != 1 || books[0].Title != "旧书" || deref(books[0].Author) != "旧作者" || deref(books[0].Collection) != "收藏" {
+			t.Fatalf("books = %+v", books)
+		}
+		highlights, err := listHighlights(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(highlights) != 1 || highlights[0].Text != "旧划线还在" || highlights[0].Color != "green" {
+			t.Fatalf("highlights = %+v", highlights)
+		}
+		cards, err := listCards()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cards) != 1 || deref(cards[0].Quote) != "旧摘录还在" || deref(cards[0].Body) != "旧笔记还在" || deref(cards[0].SourceBookID) != "b1" {
+			t.Fatalf("cards = %+v", cards)
+		}
+	}
+	reopen := func() {
+		t.Helper()
+		resetTestDB()
+		userDataDir = dir
+		booksDir = filepath.Join(dir, "books")
+		imagesDir = filepath.Join(dir, "images")
+		if err := openDB(); err != nil {
+			t.Fatalf("openDB: %v", err)
+		}
+	}
+	reopen()
+	check()
+	reopen()
+	check()
+
+	d, err := db()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Execute(context.Background(), "UPDATE cards SET quote_page_label = ? WHERE id = ?", "楔子", "card-old"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Execute(context.Background(), "UPDATE highlights SET page_label = ? WHERE id = ?", "第一回", "hl-old"); err != nil {
+		t.Fatal(err)
+	}
+	cards, err := listCards()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 1 || cards[0].QuoteLocation == nil || deref(cards[0].QuoteLocation.PageLabel) != "楔子" {
+		t.Fatalf("listCards did not read quote_page_label: %+v", cards)
+	}
+	highlights, err := listHighlights(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(highlights) != 1 || deref(highlights[0].Location.PageLabel) != "第一回" {
+		t.Fatalf("listHighlights did not read page_label: %+v", highlights)
+	}
 }
 
 func strPtr(s string) *string { return &s }
