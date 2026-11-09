@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -64,6 +65,145 @@ func (Library) ImportPaths(ctx context.Context, paths []string) (ImportResult, e
 
 func importPaths(ctx context.Context, paths []string) (ImportResult, error) {
 	return importPathsFor(mygo.CallerWindow(ctx), paths)
+}
+
+// PickAndImportFolder 选一个文件夹，把里面（含子文件夹）的 EPUB 一次导入。
+func (Library) PickAndImportFolder(ctx context.Context) (ImportFolderResult, error) {
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:      mygo.CallerWindow(ctx),
+		Title:       "选择放 EPUB 的文件夹",
+		ButtonLabel: "导入这个文件夹",
+		Directory:   true,
+	})
+	if err != nil {
+		return ImportFolderResult{}, err
+	}
+	if len(paths) == 0 {
+		return ImportFolderResult{Books: []Book{}, Errors: []ImportError{}, Cancelled: true}, nil
+	}
+	return importFolderFor(mygo.CallerWindow(ctx), paths[0])
+}
+
+// ImportFolder 给自动化测试和以后的拖拽入口用。
+func (Library) ImportFolder(ctx context.Context, dir string) (ImportFolderResult, error) {
+	return importFolderFor(mygo.CallerWindow(ctx), dir)
+}
+
+const maxFolderEpubs = 500
+
+func importFolderFor(win *mygo.Window, dir string) (ImportFolderResult, error) {
+	result := ImportFolderResult{Books: []Book{}, Errors: []ImportError{}}
+	files, err := collectEpubFiles(dir)
+	if err != nil {
+		return result, err
+	}
+	result.Scanned = int64(len(files))
+	existing, err := existingBookKeys()
+	if err != nil {
+		return result, err
+	}
+	total := int64(len(files))
+	for i, path := range files {
+		emitProgress(win, int64(i), total, baseName(path))
+		book, err := importOne(path)
+		if err != nil {
+			result.Errors = append(result.Errors, ImportError{Path: path, Message: importErrorMessage(err)})
+			continue
+		}
+		if existing[bookDedupKey(book.Title, book.Author, epubFileSize(book))] {
+			// 书架里已经有一本同名同作者、大小也一样的书：把刚导入的副本删掉。
+			discardImportedBook(book)
+			result.Skipped++
+			continue
+		}
+		existing[bookDedupKey(book.Title, book.Author, epubFileSize(book))] = true
+		result.Books = append(result.Books, book)
+		emitProgress(win, int64(i+1), total, book.Title)
+	}
+	return result, nil
+}
+
+// collectEpubFiles 递归找 .epub，跳过隐藏文件和符号链接，最多 500 本。
+func collectEpubFiles(root string) ([]string, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("不是文件夹：%s", root)
+	}
+	files := make([]string, 0, 16)
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if path != root && strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(name, ".") || !entry.Type().IsRegular() {
+			return nil
+		}
+		if extensionLower(name) != ".epub" {
+			return nil
+		}
+		files = append(files, path)
+		if len(files) >= maxFolderEpubs {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func epubFileSize(book Book) int64 {
+	info, err := os.Stat(filepath.Join(booksDir, book.ID, "book.epub"))
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func existingBookKeys() (map[string]bool, error) {
+	books, err := listBooks()
+	if err != nil {
+		return nil, err
+	}
+	keys := make(map[string]bool, len(books))
+	for _, book := range books {
+		keys[bookDedupKey(book.Title, book.Author, epubFileSize(book))] = true
+	}
+	return keys, nil
+}
+
+func bookDedupKey(title string, author *string, size int64) string {
+	authorKey := ""
+	if author != nil {
+		authorKey = normalizeTitle(*author)
+	}
+	return fmt.Sprintf("%s\x00%s\x00%d", normalizeTitle(title), authorKey, size)
+}
+
+// discardImportedBook 只删刚导入、还没有划线或卡片的书。
+func discardImportedBook(book Book) {
+	d, err := db()
+	if err != nil {
+		return
+	}
+	ctx := context.Background()
+	_, _ = d.Execute(ctx, "DELETE FROM book_text WHERE book_id = ?", book.ID)
+	if ftsReady {
+		_, _ = d.Execute(ctx, "DELETE FROM book_text_fts WHERE book_id = ?", book.ID)
+	}
+	_, _ = d.Execute(ctx, "DELETE FROM books WHERE id = ?", book.ID)
+	_ = os.RemoveAll(filepath.Join(booksDir, book.ID))
 }
 
 func importPathsFor(win *mygo.Window, paths []string) (ImportResult, error) {

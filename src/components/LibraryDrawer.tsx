@@ -1,4 +1,4 @@
-import { BookOpen, BookPlus, Plus, X } from "lucide-react";
+import { BookOpen, BookPlus, FolderInput, Plus, X } from "lucide-react";
 
 export interface LibraryBook {
   id: string;
@@ -15,6 +15,7 @@ interface Props {
   onAdd: (book: LibraryBook) => void;
   onRead: (book: LibraryBook) => void;
   onImport: () => void;
+  onImportFolder: () => void;
 }
 
 export function coverSrc(book: LibraryBook): string | null {
@@ -28,6 +29,7 @@ export default function LibraryDrawer({
   onAdd,
   onRead,
   onImport,
+  onImportFolder,
 }: Props) {
   return (
     <>
@@ -43,6 +45,10 @@ export default function LibraryDrawer({
             <span className="drawer-sub">{books.length} 本书</span>
           </div>
           <div className="drawer-actions">
+            <button className="pill-button" onClick={onImportFolder} title="从文件夹批量导入 EPUB">
+              <FolderInput size={15} />
+              文件夹
+            </button>
             <button className="pill-button" onClick={onImport}>
               <BookPlus size={15} />
               导入 EPUB

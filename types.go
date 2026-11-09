@@ -24,6 +24,16 @@ type ImportResult struct {
 	Errors []ImportError `json:"errors"`
 }
 
+// ImportFolderResult 是一次文件夹导入的结果。Scanned 是找到的 EPUB 数，
+// Skipped 是书名、作者和文件大小都和书架上的书相同的数量。
+type ImportFolderResult struct {
+	Books     []Book        `json:"books"`
+	Errors    []ImportError `json:"errors"`
+	Scanned   int64         `json:"scanned"`
+	Skipped   int64         `json:"skipped"`
+	Cancelled bool          `json:"cancelled"`
+}
+
 type ImportProgress struct {
 	Done  int64  `json:"done"`
 	Total int64  `json:"total"`

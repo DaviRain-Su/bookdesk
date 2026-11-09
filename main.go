@@ -14,6 +14,7 @@ var (
 	acpUpdateEvent      = mygo.NewEvent[AcpUpdate]("acp:update")
 	openFileEvent       = mygo.NewEvent[OpenFileEvent]("app:open-file")
 	addBookEvent        = mygo.NewEvent[struct{}]("app:add-book")
+	addFolderEvent      = mygo.NewEvent[struct{}]("app:add-folder")
 	readerModeEvent     = mygo.NewEvent[ReaderModeEvent]("app:reader-mode")
 )
 
@@ -75,6 +76,19 @@ func buildMenu() *mygo.Menu {
 						}
 						if win != nil {
 							_ = addBookEvent.Emit(win, struct{}{})
+						}
+					},
+				},
+				{
+					ID:          "file.add-folder",
+					Label:       "添加文件夹…",
+					Accelerator: "Cmd+Shift+O",
+					Click: func(item *mygo.MenuItem, win *mygo.Window) {
+						if win == nil {
+							win = mainWindow
+						}
+						if win != nil {
+							_ = addFolderEvent.Emit(win, struct{}{})
 						}
 					},
 				},

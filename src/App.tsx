@@ -661,6 +661,32 @@ export default function App() {
     [addBookToBoard, refreshBooks, toast],
   );
 
+  // 从文件夹批量导入：递归找 EPUB，跳过书架里已有的同名同作者同大小的书。
+  const importFolder = useCallback(async () => {
+    try {
+      const result = await Library.pickAndImportFolder();
+      if (result.cancelled) return;
+      await refreshBooks();
+      for (const err of result.errors) {
+        toast(`${fileName(err.path)}：${err.message}`, "error");
+      }
+      if (result.books.length > 0) {
+        const skipped = result.skipped > 0 ? `，跳过 ${result.skipped} 本已有` : "";
+        toast(`已导入 ${result.books.length} 本书${skipped}，可在书架里查看`);
+        return;
+      }
+      if (result.scanned === 0) {
+        toast("这个文件夹里没有 EPUB", "error");
+      } else if (result.skipped > 0) {
+        toast(`这 ${result.skipped} 本书都已经在书架上了`);
+      }
+    } catch (err) {
+      toast(`导入文件夹失败：${errorText(err)}`, "error");
+    } finally {
+      setImporting(null);
+    }
+  }, [refreshBooks, toast]);
+
   // 导入用户自己的笔记文件：后端只解析和匹配书，卡片由画布负责落位。
   const importNotes = useCallback(async () => {
     try {
@@ -739,6 +765,13 @@ export default function App() {
     });
     return stop;
   }, [runImport]);
+
+  useEffect(() => {
+    const stop = appEvent("app:add-folder").on(() => {
+      void importFolder();
+    });
+    return stop;
+  }, [importFolder]);
 
   // Finder 里双击 .epub（或把文件拖到程序图标上）时，由 Go 侧转成这个事件。
   useEffect(() => {
@@ -952,6 +985,7 @@ export default function App() {
             void openReader(book.id);
           }}
           onImport={() => void runImport()}
+          onImportFolder={() => void importFolder()}
         />
         <ExcerptsPanel
           open={excerptsOpen}

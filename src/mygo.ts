@@ -146,6 +146,18 @@ export interface ImportError {
   message: string;
 }
 
+/**
+ * ImportFolderResult 是一次文件夹导入的结果。Scanned 是找到的 EPUB 数，
+ * Skipped 是书名、作者和文件大小都和书架上的书相同的数量。
+ */
+export interface ImportFolderResult {
+  books: Book[];
+  errors: ImportError[];
+  scanned: number;
+  skipped: number;
+  cancelled: boolean;
+}
+
 export interface ImportNotesResult {
   notes: ImportedNote[];
   total: number;
@@ -286,6 +298,10 @@ export const Library = {
   epubURL(bookID: string): Promise<string> {
     return call("Library.EpubURL", bookID);
   },
+  /** ImportFolder 给自动化测试和以后的拖拽入口用。 */
+  importFolder(dir: string): Promise<ImportFolderResult> {
+    return call("Library.ImportFolder", dir);
+  },
   importPaths(paths: string[]): Promise<ImportResult> {
     return call("Library.ImportPaths", paths);
   },
@@ -294,6 +310,10 @@ export const Library = {
   },
   pickAndImport(): Promise<ImportResult> {
     return call("Library.PickAndImport");
+  },
+  /** PickAndImportFolder 选一个文件夹，把里面（含子文件夹）的 EPUB 一次导入。 */
+  pickAndImportFolder(): Promise<ImportFolderResult> {
+    return call("Library.PickAndImportFolder");
   },
   pickImage(): Promise<string> {
     return call("Library.PickImage");
@@ -469,5 +489,6 @@ export const events = {
   acpUpdate: event<AcpUpdate>("acp:update"),
   appOpenFile: event<OpenFileEvent>("app:open-file"),
   appAddBook: event<{}>("app:add-book"),
+  appAddFolder: event<{}>("app:add-folder"),
   appReaderMode: event<ReaderModeEvent>("app:reader-mode"),
 } as const;
