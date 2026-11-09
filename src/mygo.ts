@@ -303,6 +303,10 @@ export const Notes = {
   saveHighlight(input: SaveHighlightInput): Promise<Highlight> {
     return call("Notes.SaveHighlight", input);
   },
+  /** SetHighlightColor 改一条划线的颜色；只影响显示，不动位置和文字。 */
+  setHighlightColor(id: string, color: string): Promise<void> {
+    return call("Notes.SetHighlightColor", id, color);
+  },
 } as const;
 
 /** Board 是画布服务；一块画布的数据类型叫 BoardData。 */

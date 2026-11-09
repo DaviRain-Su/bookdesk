@@ -4,15 +4,18 @@ import {
   ChevronLeft,
   ChevronRight,
   Languages,
+  LibraryBig,
   List,
   Loader2,
   MessageCircle,
+  NotebookText,
   Search as SearchIcon,
   TriangleAlert,
   Type,
 } from "lucide-react";
 import { Characters, type Character, type ReadingSettings } from "../../mygo";
 import { convertHan } from "../../lib/han";
+import type { RevealTarget } from "../../lib/reveal";
 import FindPopover from "./FindPopover";
 import ReaderSettingsPanel from "./ReaderSettingsPanel";
 import SelectionMenu from "./SelectionMenu";
@@ -31,9 +34,12 @@ interface Props {
   initialCfi: string | null;
   initialSpineIndex: number;
   initialPercent: number;
+  initialReveal: RevealTarget | null;
   onSettingsChange: (patch: Partial<ReadingSettings>) => void;
   onClose: () => void;
   onProgress: (progress: ReaderProgress) => void;
+  onOpenExcerpts: () => void;
+  onOpenSearch: () => void;
 }
 
 /** 全屏阅读：一本书占满主区域，和书卡共用同一个 epub.js 引擎。 */
@@ -43,9 +49,12 @@ export default function ReaderView({
   initialCfi,
   initialSpineIndex,
   initialPercent,
+  initialReveal,
   onSettingsChange,
   onClose,
   onProgress,
+  onOpenExcerpts,
+  onOpenSearch,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
@@ -60,6 +69,7 @@ export default function ReaderView({
     initialCfi,
     initialSpineIndex,
     initialPercent,
+    initialReveal,
     settings,
     mode: "reader",
     onProgress,
@@ -213,6 +223,32 @@ export default function ReaderView({
                 </div>
               ) : null}
             </div>
+            <button
+              className="reader-tool"
+              title="摘录"
+              onClick={() => {
+                setSettingsOpen(false);
+                setFindOpen(false);
+                setTocOpen(false);
+                setCharactersOpen(false);
+                onOpenExcerpts();
+              }}
+            >
+              <NotebookText size={16} />
+            </button>
+            <button
+              className="reader-tool"
+              title="跨书搜索"
+              onClick={() => {
+                setSettingsOpen(false);
+                setFindOpen(false);
+                setTocOpen(false);
+                setCharactersOpen(false);
+                onOpenSearch();
+              }}
+            >
+              <LibraryBig size={16} />
+            </button>
             <button
               className={`reader-tool ${settingsOpen ? "is-active" : ""}`}
               title="阅读设置"

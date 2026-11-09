@@ -8,6 +8,7 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
+import { HIGHLIGHT_COLORS } from "./highlightColors";
 import {
   isEnglishSelection,
   type ReaderAction,
@@ -16,7 +17,7 @@ import {
 
 interface Props {
   selection: ReaderSelection;
-  onAction: (action: ReaderAction) => void;
+  onAction: (action: ReaderAction, arg?: string) => void;
 }
 
 /**
@@ -24,6 +25,7 @@ interface Props {
  * 两边如果各写一份，按钮迟早会走样；动作本身仍由 useEpubReader 执行。
  */
 export default function SelectionMenu({ selection, onAction }: Props) {
+  const existing = Boolean(selection.existingId);
   const aiButtons = (
     <>
       <button onClick={() => onAction("ask")}>
@@ -47,7 +49,22 @@ export default function SelectionMenu({ selection, onAction }: Props) {
       style={{ left: selection.x, top: selection.y }}
       onMouseDown={(event) => event.preventDefault()}
     >
-      {selection.existingId ? (
+      <span className="selection-palette">
+        <Highlighter size={13} />
+        <span className="selection-palette-label">{existing ? "颜色" : "划线"}</span>
+        <span className="selection-colors">
+          {HIGHLIGHT_COLORS.map((color) => (
+            <button
+              key={color.id}
+              className="selection-color"
+              title={existing ? `改成${color.label}` : `用${color.label}划线`}
+              style={{ background: color.fill }}
+              onClick={() => onAction(existing ? "recolor" : "highlight", color.id)}
+            />
+          ))}
+        </span>
+      </span>
+      {existing ? (
         <>
           <button onClick={() => onAction("card")}>
             <Quote size={13} />
@@ -61,10 +78,6 @@ export default function SelectionMenu({ selection, onAction }: Props) {
         </>
       ) : (
         <>
-          <button onClick={() => onAction("highlight")}>
-            <Highlighter size={13} />
-            划线
-          </button>
           <button onClick={() => onAction("card")}>
             <Quote size={13} />
             生成卡片

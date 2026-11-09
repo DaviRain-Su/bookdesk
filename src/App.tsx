@@ -66,6 +66,7 @@ export default function App() {
     initialCfi: string | null;
     initialSpineIndex: number;
     initialPercent: number;
+    initialReveal: RevealTarget | null;
   } | null>(null);
   const [lastBookId, setLastBookId] = useState<string | null>(null);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
@@ -335,73 +336,14 @@ export default function App() {
     [refreshBoards, toast],
   );
 
-  const openSearchHit = useCallback(
-    (hit: SearchHit, occurrence: number, query: string) => {
-      setSearchOpen(false);
-      const reveal: RevealTarget = {
-        bookId: hit.bookId,
-        href: hit.location.href,
-        spineIndex: hit.location.spineIndex,
-        query,
-        occurrence,
-      };
-      if (boardBookIds.includes(hit.bookId)) {
-        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
-        return;
-      }
-      const book = books.find((b) => b.id === hit.bookId);
-      window.dispatchEvent(
-        new CustomEvent("bookdesk:add-book", {
-          detail: {
-            bookId: hit.bookId,
-            title: hit.title,
-            author: book?.author ?? null,
-            reveal,
-          },
-        }),
-      );
-    },
-    [boardBookIds, books],
-  );
-
-  const openHighlight = useCallback(
-    (highlight: Highlight) => {
-      setExcerptsOpen(false);
-      const reveal: RevealTarget = {
-        bookId: highlight.bookId,
-        href: highlight.location.href ?? null,
-        spineIndex: highlight.location.spineIndex,
-        query: "",
-        occurrence: 0,
-        cfi: highlight.location.cfi ?? null,
-      };
-      if (boardBookIds.includes(highlight.bookId)) {
-        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
-        return;
-      }
-      const book = books.find((b) => b.id === highlight.bookId);
-      window.dispatchEvent(
-        new CustomEvent("bookdesk:add-book", {
-          detail: {
-            bookId: highlight.bookId,
-            title: book?.title ?? "这本书",
-            author: book?.author ?? null,
-            reveal,
-          },
-        }),
-      );
-    },
-    [boardBookIds, books],
-  );
-
   const openReader = useCallback(
-    async (bookId: string, cfi?: string | null) => {
+    async (bookId: string, cfi?: string | null, reveal?: RevealTarget | null) => {
       if (openingReaderRef.current) return;
       const book = books.find((b) => b.id === bookId);
       if (!book) return;
       openingReaderRef.current = true;
       try {
-        let initialCfi = cfi ?? null;
+        let initialCfi = cfi ?? reveal?.cfi ?? null;
         let initialSpineIndex = 0;
         let initialPercent = 0;
         try {
@@ -426,6 +368,7 @@ export default function App() {
           initialCfi,
           initialSpineIndex,
           initialPercent,
+          initialReveal: reveal ?? null,
         });
         setLastBookId(book.id);
         void Reading.setLastMode("reader").catch(() => {});
@@ -436,6 +379,101 @@ export default function App() {
     },
     [books],
   );
+
+  // 搜索结果：书桌里放下并定位；阅读模式里打开对应书的全屏并跳过去。
+  const openSearchHit = useCallback(
+    (hit: SearchHit, occurrence: number, query: string) => {
+      setSearchOpen(false);
+      const reveal: RevealTarget = {
+        bookId: hit.bookId,
+        href: hit.location.href,
+        spineIndex: hit.location.spineIndex,
+        query,
+        occurrence,
+      };
+      if (reader) {
+        if (reader.book.id === hit.bookId) {
+          window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
+        } else {
+          void openReader(hit.bookId, null, reveal);
+        }
+        return;
+      }
+      if (boardBookIds.includes(hit.bookId)) {
+        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
+        return;
+      }
+      const book = books.find((b) => b.id === hit.bookId);
+      window.dispatchEvent(
+        new CustomEvent("bookdesk:add-book", {
+          detail: {
+            bookId: hit.bookId,
+            title: hit.title,
+            author: book?.author ?? null,
+            reveal,
+          },
+        }),
+      );
+    },
+    [boardBookIds, books, openReader, reader],
+  );
+
+  // 摘录：书桌里放下并定位；阅读模式里打开对应书的全屏并跳过去。
+  const openHighlight = useCallback(
+    (highlight: Highlight) => {
+      setExcerptsOpen(false);
+      const reveal: RevealTarget = {
+        bookId: highlight.bookId,
+        href: highlight.location.href ?? null,
+        spineIndex: highlight.location.spineIndex,
+        query: "",
+        occurrence: 0,
+        cfi: highlight.location.cfi ?? null,
+      };
+      if (reader) {
+        if (reader.book.id === highlight.bookId) {
+          window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
+        } else {
+          void openReader(highlight.bookId, reveal.cfi ?? null, reveal);
+        }
+        return;
+      }
+      if (boardBookIds.includes(highlight.bookId)) {
+        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
+        return;
+      }
+      const book = books.find((b) => b.id === highlight.bookId);
+      window.dispatchEvent(
+        new CustomEvent("bookdesk:add-book", {
+          detail: {
+            bookId: highlight.bookId,
+            title: book?.title ?? "这本书",
+            author: book?.author ?? null,
+            reveal,
+          },
+        }),
+      );
+    },
+    [boardBookIds, books, openReader, reader],
+  );
+
+  const toggleExcerpts = useCallback(() => {
+    setLibraryOpen(false);
+    setSearchOpen(false);
+    setSettingsOpen(false);
+    setChatTarget(null);
+    setAskRequest(null);
+    setExcerptsOpen((v) => !v);
+  }, []);
+
+  const toggleSearch = useCallback(() => {
+    setLibraryOpen(false);
+    setExcerptsOpen(false);
+    setSettingsOpen(false);
+    setChatTarget(null);
+    setAskRequest(null);
+    setSearchOpen((v) => !v);
+  }, []);
 
   const closeReader = useCallback(() => {
     if (!reader) return;
@@ -765,21 +803,8 @@ export default function App() {
             setAskRequest(null);
             setLibraryOpen((v) => !v);
           }}
-          onOpenExcerpts={() => {
-            setLibraryOpen(false);
-            setSearchOpen(false);
-            setSettingsOpen(false);
-            setChatTarget(null);
-            setAskRequest(null);
-            setExcerptsOpen((v) => !v);
-          }}
-          onOpenSearch={() => {
-            setLibraryOpen(false);
-            setSettingsOpen(false);
-            setChatTarget(null);
-            setAskRequest(null);
-            setSearchOpen((v) => !v);
-          }}
+          onOpenExcerpts={toggleExcerpts}
+          onOpenSearch={toggleSearch}
           onOpenReader={() => {
             const target = readerTarget();
             if (target) void openReader(target);
@@ -852,9 +877,12 @@ export default function App() {
             initialCfi={reader.initialCfi}
             initialSpineIndex={reader.initialSpineIndex}
             initialPercent={reader.initialPercent}
+            initialReveal={reader.initialReveal}
             onSettingsChange={updateReaderSettings}
             onClose={closeReader}
             onProgress={handleReaderProgress}
+            onOpenExcerpts={toggleExcerpts}
+            onOpenSearch={toggleSearch}
           />
         ) : null}
         <LibraryDrawer

@@ -9,6 +9,7 @@ import { Library, Notes, type ReadingSettings } from "../../mygo";
 import { registerReadingContext } from "../../lib/reading";
 import { convertHan } from "../../lib/han";
 import { REVEAL_EVENT, type RevealTarget } from "../../lib/reveal";
+import { highlightFill } from "./highlightColors";
 import { themeById, type ReaderTheme } from "./settings";
 
 export interface TocEntry {
@@ -44,6 +45,7 @@ export interface ReaderProgress {
 
 export type ReaderAction =
   | "highlight"
+  | "recolor"
   | "card"
   | "remove"
   | "character"
@@ -78,16 +80,16 @@ export interface EpubReader {
   turn: (dir: "prev" | "next") => void;
   jumpTo: (href: string) => void;
   reveal: (target: RevealTarget) => void;
-  runAction: (action: ReaderAction) => void;
+  runAction: (action: ReaderAction, arg?: string) => void;
   dismissSelection: () => void;
   dismissHover: () => void;
 }
 
-const HIGHLIGHT_STYLES = {
-  fill: "#ffe9a3",
+const highlightStyles = (color: string) => ({
+  fill: highlightFill(color),
   "fill-opacity": "0.6",
   "mix-blend-mode": "multiply",
-};
+});
 
 const SEARCH_HIGHLIGHT_STYLES = {
   fill: "#8fc1e3",
@@ -262,6 +264,7 @@ export function useEpubReader(
   const currentHref = useRef("");
   const highlightTexts = useRef<Map<string, string>>(new Map());
   const highlightCfis = useRef<Map<string, string>>(new Map());
+  const highlightColors = useRef<Map<string, string>>(new Map());
   const lastSelectionCfi = useRef("");
   const pendingReveal = useRef<RevealTarget | null>(null);
   const pendingSyncCfi = useRef<string | null>(null);
@@ -298,7 +301,7 @@ export function useEpubReader(
   hoverRef.current = hover;
   const sectionTitles = useRef<Map<string, string>>(new Map());
   const selectionRangeRef = useRef<{ contents: Contents; range: Range } | null>(null);
-  const actionRef = useRef<Record<ReaderAction, () => void> | null>(null);
+  const actionRef = useRef<Record<ReaderAction, (arg?: string) => void> | null>(null);
 
   // 外部（搜索命中、摘录）要求跳到书里的某个位置。
   useEffect(() => {
@@ -321,10 +324,12 @@ export function useEpubReader(
         id?: string;
         cfi?: string;
         text?: string;
+        color?: string;
       }>).detail;
       if (detail?.bookId !== bookId || !detail.id || !detail.cfi) return;
       if (highlightCfis.current.has(detail.id)) return;
       highlightTexts.current.set(detail.id, detail.text ?? "");
+      highlightColors.current.set(detail.id, detail.color ?? "yellow");
       const rendition = renditionRef.current;
       if (!rendition) return;
       highlightCfis.current.set(detail.id, detail.cfi);
@@ -334,7 +339,7 @@ export function useEpubReader(
           { id: detail.id },
           undefined,
           "rc-highlight",
-          HIGHLIGHT_STYLES,
+          highlightStyles(detail.color ?? "yellow"),
         );
       } catch {
         /* 位置失效的旧划线忽略 */
@@ -342,6 +347,41 @@ export function useEpubReader(
     };
     window.addEventListener("bookdesk:highlight-created", handler);
     return () => window.removeEventListener("bookdesk:highlight-created", handler);
+  }, [bookId]);
+
+  // 另一边改了划线颜色，书页上的高亮跟着换色。
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        bookId?: string;
+        id?: string;
+        color?: string;
+      }>).detail;
+      if (detail?.bookId !== bookId || !detail.id || !detail.color) return;
+      const cfi = highlightCfis.current.get(detail.id);
+      if (!cfi) return;
+      highlightColors.current.set(detail.id, detail.color);
+      const rendition = renditionRef.current;
+      if (!rendition) return;
+      try {
+        rendition.annotations.remove(cfi, "highlight");
+      } catch {
+        /* ignore */
+      }
+      try {
+        rendition.annotations.highlight(
+          cfi,
+          { id: detail.id },
+          undefined,
+          "rc-highlight",
+          highlightStyles(detail.color),
+        );
+      } catch {
+        /* 位置失效的旧划线忽略 */
+      }
+    };
+    window.addEventListener("bookdesk:highlight-color-changed", handler);
+    return () => window.removeEventListener("bookdesk:highlight-color-changed", handler);
   }, [bookId]);
 
   // 从摘录面板删除的划线，也要把书页上的高亮一起撤掉。
@@ -358,6 +398,7 @@ export function useEpubReader(
       }
       highlightTexts.current.delete(highlightId);
       highlightCfis.current.delete(highlightId);
+      highlightColors.current.delete(highlightId);
       setSelection((cur) => (cur?.existingId === highlightId ? null : cur));
     };
     window.addEventListener("bookdesk:highlight-deleted", handler);
@@ -442,10 +483,11 @@ export function useEpubReader(
       };
     };
 
-    const applyHighlight = (cfiRange: string, highlightId: string) => {
+    const applyHighlight = (cfiRange: string, highlightId: string, color: string) => {
       const rendition = renditionRef.current;
       if (!rendition) return;
       highlightCfis.current.set(highlightId, cfiRange);
+      highlightColors.current.set(highlightId, color);
       // 点击由书页文档上的统一监听处理，这样划线的 SVG 层可以
       // pointer-events: none，划选也能从已经划过的文字上起手。
       rendition.annotations.highlight(
@@ -453,7 +495,7 @@ export function useEpubReader(
         { id: highlightId },
         undefined,
         "rc-highlight",
-        HIGHLIGHT_STYLES,
+        highlightStyles(color),
       );
     };
 
@@ -475,7 +517,7 @@ export function useEpubReader(
             { id },
             undefined,
             "rc-highlight",
-            HIGHLIGHT_STYLES,
+            highlightStyles(highlightColors.current.get(id) ?? "yellow"),
           );
         } catch {
           /* 位置失效的旧划线忽略 */
@@ -483,7 +525,11 @@ export function useEpubReader(
       }
     };
 
-    const saveHighlight = async (cfiRange: string, text: string): Promise<string | null> => {
+    const saveHighlight = async (
+      cfiRange: string,
+      text: string,
+      color = "yellow",
+    ): Promise<string | null> => {
       try {
         const saved = await Notes.saveHighlight({
           id: null,
@@ -497,13 +543,13 @@ export function useEpubReader(
             charOffset: null,
           },
           text,
-          color: "yellow",
+          color,
         });
         highlightTexts.current.set(saved.id, text);
-        applyHighlight(cfiRange, saved.id);
+        applyHighlight(cfiRange, saved.id, saved.color || color);
         window.dispatchEvent(
           new CustomEvent("bookdesk:highlight-created", {
-            detail: { bookId, id: saved.id, cfi: cfiRange, text },
+            detail: { bookId, id: saved.id, cfi: cfiRange, text, color: saved.color || color },
           }),
         );
         highlightsChanged();
@@ -922,7 +968,15 @@ export function useEpubReader(
             }
             return;
           }
+          // contents.range() 只按 CFI 的 range 段在当前文档里找位置，
+          // 别章的划线会被映射到本章同样的段落上；先按章节过滤。
+          const book = bookRef.current;
+          const currentSection = book?.spine.get(currentHref.current) ?? null;
           for (const [highlightId, cfi] of highlightCfis.current) {
+            if (book && currentSection) {
+              const section = book.spine.get(cfi);
+              if (section && section.index !== currentSection.index) continue;
+            }
             let range: Range | null = null;
             try {
               range = contents.range(cfi);
@@ -1024,7 +1078,7 @@ export function useEpubReader(
             const cfi = item.location.cfi;
             if (!cfi) continue;
             highlightTexts.current.set(item.id, item.text);
-            applyHighlight(cfi, item.id);
+            applyHighlight(cfi, item.id, item.color || "yellow");
           }
         } catch {
           /* 划线读取失败不影响阅读 */
@@ -1109,13 +1163,50 @@ export function useEpubReader(
         if (initial) void reveal(initial);
 
         // 供划选浮层按钮调用
-        const onHighlightRequest = () => {
+        const onHighlightRequest = (color?: string) => {
           const current = selectionRef.current;
           if (!current) return;
-          void saveHighlight(current.cfiRange, current.text).then(() => {
+          void saveHighlight(current.cfiRange, current.text, color || "yellow").then(() => {
             clearSelection();
             setSelection(null);
           });
+        };
+        const onRecolorRequest = (color?: string) => {
+          const current = selectionRef.current;
+          if (!current?.existingId || !color) return;
+          const highlightId = current.existingId;
+          const cfi = highlightCfis.current.get(highlightId) ?? current.cfiRange;
+          void Notes.setHighlightColor(highlightId, color)
+            .then(() => {
+              highlightColors.current.set(highlightId, color);
+              const rendition = renditionRef.current;
+              if (rendition) {
+                try {
+                  rendition.annotations.remove(cfi, "highlight");
+                } catch {
+                  /* ignore */
+                }
+                try {
+                  rendition.annotations.highlight(
+                    cfi,
+                    { id: highlightId },
+                    undefined,
+                    "rc-highlight",
+                    highlightStyles(color),
+                  );
+                } catch {
+                  /* 位置失效的旧划线忽略 */
+                }
+              }
+              window.dispatchEvent(
+                new CustomEvent("bookdesk:highlight-color-changed", {
+                  detail: { bookId, id: highlightId, color },
+                }),
+              );
+              highlightsChanged();
+            })
+            .catch(() => {});
+          setSelection(null);
         };
         const onCardRequest = () => {
           const current = selectionRef.current;
@@ -1155,6 +1246,7 @@ export function useEpubReader(
               rendition.annotations.remove(current.cfiRange, "highlight");
               highlightTexts.current.delete(highlightId);
               highlightCfis.current.delete(highlightId);
+              highlightColors.current.delete(highlightId);
               window.dispatchEvent(
                 new CustomEvent("bookdesk:highlight-deleted", {
                   detail: { id: highlightId },
@@ -1218,6 +1310,7 @@ export function useEpubReader(
         };
         actionRef.current = {
           highlight: onHighlightRequest,
+          recolor: onRecolorRequest,
           card: onCardRequest,
           remove: onDeleteRequest,
           character: onCharacterRequest,
@@ -1287,8 +1380,8 @@ export function useEpubReader(
     void revealRef.current?.(target);
   }, []);
 
-  const runAction = useCallback((action: ReaderAction) => {
-    actionRef.current?.[action]();
+  const runAction = useCallback((action: ReaderAction, arg?: string) => {
+    actionRef.current?.[action](arg);
   }, []);
 
   const dismissSelection = useCallback(() => {

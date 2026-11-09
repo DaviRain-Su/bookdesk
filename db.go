@@ -629,6 +629,15 @@ func deleteHighlight(id string) error {
 	return err
 }
 
+func setHighlightColor(id, color string) error {
+	d, err := db()
+	if err != nil {
+		return err
+	}
+	_, err = d.Execute(context.Background(), "UPDATE highlights SET color = ? WHERE id = ?", color, id)
+	return err
+}
+
 // ---------- cards ----------
 
 func upsertCard(card Card) error {

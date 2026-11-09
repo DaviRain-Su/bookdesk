@@ -45,6 +45,11 @@ func (Notes) DeleteHighlight(ctx context.Context, id string) error {
 	return deleteHighlight(id)
 }
 
+// SetHighlightColor 改一条划线的颜色；只影响显示，不动位置和文字。
+func (Notes) SetHighlightColor(ctx context.Context, id, color string) error {
+	return setHighlightColor(id, color)
+}
+
 func (Notes) SaveCard(ctx context.Context, input SaveCardInput) (Card, error) {
 	id := newID("card")
 	if input.ID != nil {
