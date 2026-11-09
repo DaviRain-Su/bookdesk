@@ -211,3 +211,22 @@ type WordLookupInput struct {
 type OpenFileEvent struct {
 	Path string `json:"path"`
 }
+
+// ImportedNote 是从用户自己的笔记文件里读出来的一条划线或想法。
+// 只读本地文件，不联网；匹配到书库里的书时带上位置，方便以后跳回原文。
+type ImportedNote struct {
+	BookID    *string       `json:"bookId"`
+	BookTitle string        `json:"bookTitle"`
+	Author    *string       `json:"author"`
+	Chapter   *string       `json:"chapter"`
+	Quote     string        `json:"quote"`
+	Note      *string       `json:"note"`
+	Location  *BookLocation `json:"location"`
+}
+
+type ImportNotesResult struct {
+	Notes   []ImportedNote `json:"notes"`
+	Total   int64          `json:"total"`
+	Skipped int64          `json:"skipped"`
+	Errors  []ImportError  `json:"errors"`
+}

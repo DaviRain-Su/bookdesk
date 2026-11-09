@@ -23,7 +23,8 @@ import ImageNode from "./nodes/ImageNode";
 import CharacterNode from "./nodes/CharacterNode";
 import { ActiveBookContext } from "./ActiveBookContext";
 import type { Tool } from "./Toolbar";
-import { Board, Characters, Notes } from "../mygo";
+import { Board, Characters, Notes, type ImportedNote } from "../mygo";
+import type { BookLocation } from "../types";
 import { serializeEdges, serializeNodes, type BoardMeta } from "../lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "../lib/reveal";
 
@@ -75,15 +76,6 @@ interface Props {
   hasBooks: boolean;
   onAddBook: () => void;
   onOpenLibrary: () => void;
-}
-
-interface QuoteLocation {
-  bookId: string;
-  cfi: string | null;
-  spineIndex: number;
-  href: string | null;
-  pageLabel: string | null;
-  charOffset: number | null;
 }
 
 function nodeSize(node: Node): { width: number; height: number } {
@@ -219,7 +211,7 @@ function BoardCanvas({
       }
       if (node.type !== "text" && node.type !== "image") return;
       const data = node.data as Record<string, unknown>;
-      const quoteLocation = (data.quoteLocation as QuoteLocation | null | undefined) ?? null;
+      const quoteLocation = (data.quoteLocation as BookLocation | null | undefined) ?? null;
       void Notes.saveCard({
         id: typeof data.cardId === "string" ? data.cardId : null,
         type: node.type === "image" ? "image" : "text",
@@ -384,7 +376,9 @@ function BoardCanvas({
             bookId?: string;
             quote?: string;
             source?: string;
-            location?: QuoteLocation | null;
+            location?: BookLocation | null;
+            title?: string;
+            body?: string;
           }
         | undefined;
       if (!detail?.quote) return;
@@ -407,8 +401,8 @@ function BoardCanvas({
         type: "text",
         position,
         data: {
-          title: "",
-          body: "",
+          title: detail.title ?? "",
+          body: detail.body ?? "",
           quote: detail.quote,
           source: detail.source ?? "",
           sourceBookId: detail.bookId ?? null,
@@ -427,6 +421,82 @@ function BoardCanvas({
     };
     window.addEventListener("bookdesk:add-quote-card", handler);
     return () => window.removeEventListener("bookdesk:add-quote-card", handler);
+  }, [persistNode, screenToFlowPosition, setNodes]);
+
+  // 导入笔记：一次落一整批卡片，按三列排开，和画布上已有的同一段划线去重。
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | { notes?: ImportedNote[]; skipped?: number }
+        | undefined;
+      const notes = detail?.notes ?? [];
+      if (notes.length === 0) return;
+      const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+      const existing = new Set(
+        nodesRef.current
+          .filter((node) => node.type === "text")
+          .map((node) => {
+            const data = node.data as { quote?: string; body?: string };
+            return normalize(data.quote ?? data.body ?? "");
+          })
+          .filter(Boolean),
+      );
+      let skipped = detail?.skipped ?? 0;
+      const fresh: ImportedNote[] = [];
+      for (const note of notes) {
+        const key = normalize(note.quote || note.note || "");
+        if (!key || existing.has(key)) {
+          skipped++;
+          continue;
+        }
+        existing.add(key);
+        fresh.push(note);
+      }
+      if (fresh.length === 0) {
+        window.dispatchEvent(
+          new CustomEvent("bookdesk:note-cards-added", { detail: { added: 0, skipped } }),
+        );
+        return;
+      }
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const base = { x: center.x - 480, y: center.y - 260 };
+      const all = [...nodesRef.current];
+      const created: Node[] = fresh.map((note, index) => {
+        const column = index % 3;
+        const row = Math.floor(index / 3);
+        const desired = { x: base.x + column * 360, y: base.y + row * 280 };
+        const position = findFreePosition(all, desired, { width: 320, height: 240 });
+        const source = [note.bookTitle, note.chapter].filter(Boolean).join(" · ");
+        const node: Node = {
+          id: `text-${crypto.randomUUID()}`,
+          type: "text",
+          position,
+          data: {
+            title: "",
+            body: note.note ?? "",
+            quote: note.quote,
+            source,
+            sourceBookId: note.bookId ?? null,
+            quoteLocation: note.location ?? null,
+          },
+          style: { width: 320 },
+        };
+        all.push(node);
+        return node;
+      });
+      setNodes((nds) => [...nds, ...created]);
+      created.forEach((node) => persistNode(node));
+      window.dispatchEvent(
+        new CustomEvent("bookdesk:note-cards-added", {
+          detail: { added: created.length, skipped },
+        }),
+      );
+    };
+    window.addEventListener("bookdesk:add-note-cards", handler);
+    return () => window.removeEventListener("bookdesk:add-note-cards", handler);
   }, [persistNode, screenToFlowPosition, setNodes]);
 
   useEffect(() => {

@@ -6,6 +6,7 @@ import {
   Highlighter,
   Library,
   Maximize2,
+  NotebookPen,
   PanelLeft,
   Pencil,
   Plus,
@@ -32,6 +33,7 @@ interface Props {
   onAddBook: () => void;
   onOpenLibrary: () => void;
   onOpenExcerpts: () => void;
+  onImportNotes: () => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   onOpenReader: () => void;
@@ -55,6 +57,7 @@ export default function TopBar({
   onAddBook,
   onOpenLibrary,
   onOpenExcerpts,
+  onImportNotes,
   onOpenSearch,
   onOpenSettings,
   onOpenReader,
@@ -241,6 +244,9 @@ export default function TopBar({
         <button className="stat stat-button" title="查看所有摘录" onClick={onOpenExcerpts}>
           <Highlighter size={15} />
           <span>摘录 {highlightCount}</span>
+        </button>
+        <button className="icon-button" onClick={onImportNotes} title="导入笔记">
+          <NotebookPen size={17} />
         </button>
         <button className="icon-button" onClick={onOpenLibrary} title="书架">
           <Library size={17} />

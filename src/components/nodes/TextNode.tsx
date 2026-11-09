@@ -1,7 +1,8 @@
 import { useContext, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Quote, X } from "lucide-react";
+import { MapPin, Quote, X } from "lucide-react";
 import { ActiveBookContext } from "../ActiveBookContext";
+import type { BookLocation } from "../../types";
 
 export interface TextNodeData {
   cardId?: string;
@@ -10,6 +11,7 @@ export interface TextNodeData {
   quote?: string;
   source?: string;
   sourceBookId?: string | null;
+  quoteLocation?: BookLocation | null;
   tone?: "default" | "muted" | "other-book";
   [key: string]: unknown;
 }
@@ -67,7 +69,30 @@ export default function TextNode({ id, data, selected }: NodeProps) {
         <div className="quote-block">
           <Quote size={13} className="quote-icon" />
           <p>{d.quote}</p>
-          {d.source ? <span className="quote-source">{d.source}</span> : null}
+          <div className="quote-foot">
+            {d.source ? <span className="quote-source">{d.source}</span> : null}
+            {d.quoteLocation && d.sourceBookId ? (
+              <button
+                className="quote-locate nodrag"
+                title="回到书里"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  window.dispatchEvent(
+                    new CustomEvent("bookdesk:open-quote-location", {
+                      detail: {
+                        bookId: d.sourceBookId,
+                        quote: d.quote ?? "",
+                        location: d.quoteLocation,
+                      },
+                    }),
+                  );
+                }}
+              >
+                <MapPin size={11} />
+                回到书里
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
 

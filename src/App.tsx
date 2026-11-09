@@ -16,7 +16,7 @@ import ReaderView, { type ReaderBook } from "./components/reader/ReaderView";
 import type { ReaderProgress } from "./components/reader/useEpubReader";
 import { DEFAULT_READER_SETTINGS } from "./components/reader/settings";
 import type { SearchHit } from "./lib/search";
-import type { Highlight } from "./types";
+import type { BookLocation, Highlight } from "./types";
 import { Board, Library, Notes, Reading, events, type ReadingSettings } from "./mygo";
 import { parseEdges, parseNodes, parseViewport } from "./lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "./lib/reveal";
@@ -380,6 +380,31 @@ export default function App() {
     [books],
   );
 
+  // 把「打开某本书并跳到某个位置」收成一条路：搜索结果、摘录、
+  // 卡片上的「回到书里」都走这里，免得三处各写一份。
+  const revealInBook = useCallback(
+    (bookId: string, title: string, author: string | null, reveal: RevealTarget) => {
+      if (reader) {
+        if (reader.book.id === bookId) {
+          window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
+        } else {
+          void openReader(bookId, reveal.cfi ?? null, reveal);
+        }
+        return;
+      }
+      if (boardBookIds.includes(bookId)) {
+        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
+        return;
+      }
+      window.dispatchEvent(
+        new CustomEvent("bookdesk:add-book", {
+          detail: { bookId, title, author, reveal },
+        }),
+      );
+    },
+    [boardBookIds, openReader, reader],
+  );
+
   // 搜索结果：书桌里放下并定位；阅读模式里打开对应书的全屏并跳过去。
   const openSearchHit = useCallback(
     (hit: SearchHit, occurrence: number, query: string) => {
@@ -391,31 +416,10 @@ export default function App() {
         query,
         occurrence,
       };
-      if (reader) {
-        if (reader.book.id === hit.bookId) {
-          window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
-        } else {
-          void openReader(hit.bookId, null, reveal);
-        }
-        return;
-      }
-      if (boardBookIds.includes(hit.bookId)) {
-        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
-        return;
-      }
       const book = books.find((b) => b.id === hit.bookId);
-      window.dispatchEvent(
-        new CustomEvent("bookdesk:add-book", {
-          detail: {
-            bookId: hit.bookId,
-            title: hit.title,
-            author: book?.author ?? null,
-            reveal,
-          },
-        }),
-      );
+      revealInBook(hit.bookId, hit.title, book?.author ?? null, reveal);
     },
-    [boardBookIds, books, openReader, reader],
+    [books, revealInBook],
   );
 
   // 摘录：书桌里放下并定位；阅读模式里打开对应书的全屏并跳过去。
@@ -430,32 +434,39 @@ export default function App() {
         occurrence: 0,
         cfi: highlight.location.cfi ?? null,
       };
-      if (reader) {
-        if (reader.book.id === highlight.bookId) {
-          window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
-        } else {
-          void openReader(highlight.bookId, reveal.cfi ?? null, reveal);
-        }
-        return;
-      }
-      if (boardBookIds.includes(highlight.bookId)) {
-        window.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: reveal }));
-        return;
-      }
       const book = books.find((b) => b.id === highlight.bookId);
-      window.dispatchEvent(
-        new CustomEvent("bookdesk:add-book", {
-          detail: {
-            bookId: highlight.bookId,
-            title: book?.title ?? "这本书",
-            author: book?.author ?? null,
-            reveal,
-          },
-        }),
-      );
+      revealInBook(highlight.bookId, book?.title ?? "这本书", book?.author ?? null, reveal);
     },
-    [boardBookIds, books, openReader, reader],
+    [books, revealInBook],
   );
+
+  // 卡片上的「回到书里」：按章节和划线原文定位。
+  const openBookLocation = useCallback(
+    (bookId: string, quote: string, location: BookLocation) => {
+      const reveal: RevealTarget = {
+        bookId,
+        href: location.href ?? null,
+        spineIndex: location.spineIndex,
+        query: quote,
+        occurrence: 0,
+      };
+      const book = books.find((b) => b.id === bookId);
+      revealInBook(bookId, book?.title ?? "这本书", book?.author ?? null, reveal);
+    },
+    [books, revealInBook],
+  );
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | { bookId?: string; quote?: string; location?: BookLocation }
+        | undefined;
+      if (!detail?.bookId || !detail.location) return;
+      openBookLocation(detail.bookId, detail.quote ?? "", detail.location);
+    };
+    window.addEventListener("bookdesk:open-quote-location", handler);
+    return () => window.removeEventListener("bookdesk:open-quote-location", handler);
+  }, [openBookLocation]);
 
   const toggleExcerpts = useCallback(() => {
     setLibraryOpen(false);
@@ -650,6 +661,48 @@ export default function App() {
     [addBookToBoard, refreshBooks, toast],
   );
 
+  // 导入用户自己的笔记文件：后端只解析和匹配书，卡片由画布负责落位。
+  const importNotes = useCallback(async () => {
+    try {
+      const result = await Notes.pickAndImportNotes();
+      for (const err of result.errors) {
+        toast(`${fileName(err.path)}：${err.message}`, "error");
+      }
+      if (result.notes.length > 0) {
+        window.dispatchEvent(
+          new CustomEvent("bookdesk:add-note-cards", {
+            detail: { notes: result.notes, skipped: result.skipped },
+          }),
+        );
+        return;
+      }
+      if (result.skipped > 0) {
+        toast("这些笔记都已经在书桌上了");
+      } else if (result.errors.length === 0) {
+        toast("没有读到笔记；支持 Markdown、CSV、JSON", "error");
+      }
+    } catch (err) {
+      toast(`导入笔记失败：${errorText(err)}`, "error");
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | { added?: number; skipped?: number }
+        | undefined;
+      const added = detail?.added ?? 0;
+      const skipped = detail?.skipped ?? 0;
+      if (added > 0) {
+        toast(`已导入 ${added} 条笔记${skipped > 0 ? `，跳过 ${skipped} 条重复` : ""}`);
+      } else if (skipped > 0) {
+        toast("这些笔记都已经在书桌上了");
+      }
+    };
+    window.addEventListener("bookdesk:note-cards-added", handler);
+    return () => window.removeEventListener("bookdesk:note-cards-added", handler);
+  }, [toast]);
+
   useEffect(() => {
     let stop: (() => void) | undefined;
     try {
@@ -804,6 +857,7 @@ export default function App() {
             setLibraryOpen((v) => !v);
           }}
           onOpenExcerpts={toggleExcerpts}
+          onImportNotes={() => void importNotes()}
           onOpenSearch={toggleSearch}
           onOpenReader={() => {
             const target = readerTarget();

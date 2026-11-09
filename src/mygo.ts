@@ -146,6 +146,13 @@ export interface ImportError {
   message: string;
 }
 
+export interface ImportNotesResult {
+  notes: ImportedNote[];
+  total: number;
+  skipped: number;
+  errors: ImportError[];
+}
+
 export interface ImportProgress {
   done: number;
   total: number;
@@ -155,6 +162,20 @@ export interface ImportProgress {
 export interface ImportResult {
   books: Book[];
   errors: ImportError[];
+}
+
+/**
+ * ImportedNote 是从用户自己的笔记文件里读出来的一条划线或想法。
+ * 只读本地文件，不联网；匹配到书库里的书时带上位置，方便以后跳回原文。
+ */
+export interface ImportedNote {
+  bookId: string | null;
+  bookTitle: string;
+  author: string | null;
+  chapter: string | null;
+  quote: string;
+  note: string | null;
+  location: BookLocation | null;
 }
 
 /** OpenFileEvent 把 Finder 双击打开的文件交给前端导入。 */
@@ -291,11 +312,18 @@ export const Notes = {
   deleteHighlight(id: string): Promise<void> {
     return call("Notes.DeleteHighlight", id);
   },
+  /** ImportNotes 给自动化测试和以后可能的拖拽入口用。 */
+  importNotes(paths: string[]): Promise<ImportNotesResult> {
+    return call("Notes.ImportNotes", paths);
+  },
   listCards(): Promise<Card[]> {
     return call("Notes.ListCards");
   },
   listHighlights(bookID: string | null): Promise<Highlight[]> {
     return call("Notes.ListHighlights", bookID);
+  },
+  pickAndImportNotes(): Promise<ImportNotesResult> {
+    return call("Notes.PickAndImportNotes");
   },
   saveCard(input: SaveCardInput): Promise<Card> {
     return call("Notes.SaveCard", input);

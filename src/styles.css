@@ -907,6 +907,39 @@ button:disabled {
   color: #a08a55;
 }
 
+.quote-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.quote-foot .quote-source {
+  margin-top: 0;
+}
+
+.quote-locate {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid #eadfc2;
+  border-radius: 6px;
+  background: #fffdf7;
+  color: #a08a55;
+  font-size: 10px;
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quote-locate:hover {
+  color: #7a642f;
+  border-color: #d9c69a;
+}
+
 /* ---------- Book card ---------- */
 
 .book-card {

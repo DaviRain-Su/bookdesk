@@ -15,11 +15,11 @@ export interface Book {
 
 export interface BookLocation {
   bookId: BookId;
-  cfi?: string | null;
+  cfi: string | null;
   spineIndex: number;
-  href?: string | null;
-  pageLabel?: string | null;
-  charOffset?: number | null;
+  href: string | null;
+  pageLabel: string | null;
+  charOffset: number | null;
 }
 
 export interface Highlight {
