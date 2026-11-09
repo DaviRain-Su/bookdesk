@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -156,6 +158,69 @@ func TestSanitizeShareTextAndVerticalPieces(t *testing.T) {
 	parens := groupVerticalColumn("（）")
 	if parens[0].Form != '︵' || parens[1].Form != '︶' {
 		t.Fatalf("parens = %+v", parens)
+	}
+}
+
+func TestLatinRunUsesRenderedCells(t *testing.T) {
+	measure := func(s string) float64 { return float64(len([]rune(s))) * 0.5 }
+	pieces := groupVerticalPieces("Hello, world!", 2, measure)
+	if len(pieces) != 1 || !pieces[0].Latin {
+		t.Fatalf("pieces = %+v", pieces)
+	}
+	if pieces[0].Cells >= len([]rune(pieces[0].Text)) {
+		t.Fatalf("cells %d still one per letter", pieces[0].Cells)
+	}
+	cols, truncated := layoutVerticalTextMeasured("Hello, world!世", 2, 6, 2, measure)
+	if truncated || len(cols) != 1 || cols[0] != "Hello, world!世" {
+		t.Fatalf("word split across columns: trunc=%v cols=%#v", truncated, cols)
+	}
+	packed := groupVerticalPieces(cols[0], 2, measure)
+	if len(packed) != 2 || packed[0].Text != "Hello, world!" || packed[0].Cells >= 13 || packed[1].Text != "世" {
+		t.Fatalf("packed = %+v", packed)
+	}
+	moved, _ := layoutVerticalTextMeasured("甲乙丙丁Hello", 2, 6, 2, measure)
+	if len(moved) != 2 || moved[0] != "甲乙丙丁" || moved[1] != "Hello" {
+		t.Fatalf("did not keep the word together: %#v", moved)
+	}
+}
+
+func TestPremultipliedBlend(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.SetRGBA(0, 0, color.RGBA{246, 241, 230, 255})
+	pm := byte(200 * 128 / 255)
+	blendPixel(img, 0, 0, color.RGBA{pm, pm, pm, 128})
+	got := img.RGBAAt(0, 0)
+	want := 100 + 246*127/255
+	if absInt(int(got.R)-want) > 1 || absInt(int(got.G)-want) > 2 || absInt(int(got.B)-(100+230*127/255)) > 2 {
+		t.Fatalf("blend = %v, want R about %d", got, want)
+	}
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func TestMissingGlyphsAreNotDrawn(t *testing.T) {
+	if _, err := loadShareFonts(); err != nil {
+		t.Skip(err)
+	}
+	plain, err := renderShareCard(ShareCardInput{
+		Quote: "你好", Title: "书", Author: "作者", Template: "light", Ratio: "square", Color: "yellow",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withMissing, err := renderShareCard(ShareCardInput{
+		Quote: "你好\U0001F600\uE000", Title: "书", Author: "作者", Template: "light", Ratio: "square", Color: "yellow",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(plain, withMissing) {
+		t.Fatal("missing glyph was drawn onto the card")
 	}
 }
 

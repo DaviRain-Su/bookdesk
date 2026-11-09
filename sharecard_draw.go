@@ -405,11 +405,13 @@ func layoutVerticalCard(in ShareCardInput, w, h int, qFace, nFace *shareFaces) S
 	}
 	return layoutShareCardContent(in, shareLayoutLimits{
 		Vertical:       true,
+		VerticalCellH:  float64(qLH),
+		NoteCellH:      float64(nLH),
 		MaxColumns:     maxCols,
 		MaxRunes:       maxRunes,
 		NoteMaxColumns: noteCols,
 		NoteMaxRunes:   noteRunes,
-	}, nil, nil)
+	}, qFace.Width, nFace.Width)
 }
 
 func paintHorizontalCard(img *image.RGBA, content ShareCardContent, pal sharePalette, qFace, nFace, mFace, fFace, kFace *shareFaces) {
@@ -534,7 +536,7 @@ func paintVerticalColumns(img *image.RGBA, faces *shareFaces, col color.Color, c
 	for i, column := range columns {
 		x := right - (i+1)*colPitch
 		row := 0
-		for _, piece := range groupVerticalColumn(column) {
+		for _, piece := range groupVerticalPieces(column, float64(lineH), faces.Width) {
 			if piece.Latin {
 				drawRotatedLatin(img, faces, col, piece.Text, x, top+row*lineH, colPitch, piece.Cells*lineH, ascent)
 				row += piece.Cells
@@ -607,14 +609,15 @@ func blendPixel(img *image.RGBA, x, y int, src color.RGBA) {
 		img.SetRGBA(x, y, src)
 		return
 	}
+	// image.RGBA 和字体栅格都是预乘 alpha。再乘一次 alpha 会把笔画描暗。
 	dst := img.RGBAAt(x, y)
 	a := uint32(src.A)
 	inv := 255 - a
 	img.SetRGBA(x, y, color.RGBA{
-		R: uint8((uint32(src.R)*a + uint32(dst.R)*inv) / 255),
-		G: uint8((uint32(src.G)*a + uint32(dst.G)*inv) / 255),
-		B: uint8((uint32(src.B)*a + uint32(dst.B)*inv) / 255),
-		A: 255,
+		R: uint8(uint32(src.R) + uint32(dst.R)*inv/255),
+		G: uint8(uint32(src.G) + uint32(dst.G)*inv/255),
+		B: uint8(uint32(src.B) + uint32(dst.B)*inv/255),
+		A: uint8(a + uint32(dst.A)*inv/255),
 	})
 }
 

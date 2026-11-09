@@ -189,6 +189,53 @@ func TestMarkdownNeutralizesActivePayloads(t *testing.T) {
 	}
 }
 
+func TestMarkdownAttributesStructureAndAutolinks(t *testing.T) {
+	when := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+	ial := "{: tabindex='0' autofocus='' onfocus='document.title=this.dataset.x'}"
+	note := "Setext title\n===\n1. first\n2) second\na | b\n:-- | --:\n: definition\n" + ial + "\nsee https://evil.test/x and www.evil.test/y"
+	book := Book{ID: "b", Title: ial, Author: strPtr(ial)}
+	items := []BookShareItem{{
+		ID:      "hl:1",
+		Quote:   ial,
+		Chapter: ial,
+		Note:    note,
+		Color:   "yellow",
+	}}
+	_, md := renderBookExport(book, items, []BookExportChoice{{ID: "hl:1", IncludeNote: true}}, when)
+	if strings.Contains(strings.ReplaceAll(md, `\{`, ""), "{") || strings.Contains(strings.ReplaceAll(md, `\}`, ""), "}") {
+		t.Fatalf("raw braces:\n%s", md)
+	}
+	if strings.Contains(strings.ReplaceAll(md, `\{:`, ""), "{:") || strings.Contains(md, "://") || strings.Contains(strings.ToLower(md), "www.") {
+		t.Fatalf("IAL or autolink survived:\n%s", md)
+	}
+	if !strings.Contains(md, `:\/\/`) || !strings.Contains(md, `www\.`) {
+		t.Fatalf("url became unreadable:\n%s", md)
+	}
+	if strings.Contains(md, "\n===\n") || strings.HasSuffix(strings.TrimRight(md, "\n"), "\n===") {
+		t.Fatalf("setext underline:\n%s", md)
+	}
+	if !strings.Contains(md, `\===`) {
+		t.Fatalf("setext was dropped:\n%s", md)
+	}
+	if strings.Contains(strings.ReplaceAll(md, `\|`, ""), "|") {
+		t.Fatalf("raw table pipe:\n%s", md)
+	}
+	for _, line := range strings.Split(md, "\n") {
+		body := strings.TrimSpace(line)
+		body = strings.TrimPrefix(body, ">")
+		body = strings.TrimSpace(body)
+		if leadingOrderedList(body) {
+			t.Fatalf("ordered list: %q", line)
+		}
+		if strings.HasPrefix(body, ":") {
+			t.Fatalf("definition list: %q", line)
+		}
+	}
+	if !strings.Contains(md, `\1. first`) || !strings.Contains(md, `2\) second`) {
+		t.Fatalf("ordered markers missing:\n%s", md)
+	}
+}
+
 func TestHTMLEscapesNoteChapterAuthorAndNoReferrer(t *testing.T) {
 	when := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
 	author := `<script>author</script>`
@@ -235,6 +282,28 @@ func TestExportBaseNameAndSavePath(t *testing.T) {
 	}
 	if utf8.RuneCountInString(exportBaseName(strings.Repeat("书", 45))) != 40 {
 		t.Fatal("cjk truncation")
+	}
+	if exportBaseName("上/下\\册") != "上-下-册" {
+		t.Fatalf("slash = %q", exportBaseName("上/下\\册"))
+	}
+	hidden := "书\u200e\u200f\u200c\ufeff\u2060名"
+	if exportBaseName(hidden) != "书名" {
+		t.Fatalf("hidden marks = %q", exportBaseName(hidden))
+	}
+	family := "\U0001F468\u200D\U0001F469\u200D\U0001F467\u200D\U0001F466"
+	if graphemeLen(family) != len(family) {
+		t.Fatalf("family emoji grapheme = %d, bytes %d", graphemeLen(family), len(family))
+	}
+	if truncateGraphemes(family+"书", 1) != family {
+		t.Fatal("ZWJ sequence was split")
+	}
+	many := strings.Repeat(family, 9)
+	got = exportBaseName(many)
+	if len(got) > 200 {
+		t.Fatalf("byte cap %d", len(got))
+	}
+	if len(got) == 0 || len(got)%len(family) != 0 {
+		t.Fatalf("emoji cut mid-cluster: %q", got)
 	}
 
 	dir := t.TempDir()

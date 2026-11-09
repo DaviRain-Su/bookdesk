@@ -356,15 +356,37 @@ func markdownSafeLine(line string) string {
 			b.WriteString("&gt;")
 		case '"':
 			b.WriteString("&quot;")
-		case '\\', '`', '*', '_', '[', ']', '(', ')', '!':
-			// 反斜杠让链接、图片和强调失效。尖括号改成实体，避免 kramdown 把 \< 还原成原始标签。
+		case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '{', '}', '|':
+			// 反斜杠让链接、图片、表格和 kramdown 属性块失效。
+			// 尖括号用实体，避免 kramdown 把 \< 还原成原始标签。
 			b.WriteByte('\\')
 			b.WriteRune(r)
 		default:
 			b.WriteRune(r)
 		}
 	}
-	return escapeMarkdownBlockStart(b.String())
+	return escapeMarkdownBlockStart(breakAutolinks(b.String()))
+}
+
+// breakAutolinks 打断 GFM 会自动变成链接的 :// 和 www.。
+// 反斜杠在渲染后消失，读起来仍是原来的地址，但不会变成可点击的外链。
+func breakAutolinks(s string) string {
+	s = strings.ReplaceAll(s, "://", `:\/\/`)
+	var b strings.Builder
+	lower := strings.ToLower(s)
+	i := 0
+	for i < len(s) {
+		j := strings.Index(lower[i:], "www.")
+		if j < 0 {
+			b.WriteString(s[i:])
+			break
+		}
+		j += i
+		b.WriteString(s[i : j+3])
+		b.WriteString(`\.`)
+		i = j + 4
+	}
+	return b.String()
 }
 
 // escapeMarkdownBlockStart 在行首的块标记前加反斜杠，避免 #、---、列表和引用改变文档结构。
@@ -377,7 +399,7 @@ func escapeMarkdownBlockStart(line string) string {
 		return line
 	}
 	rest := line[i:]
-	if rest[0] == '#' || rest[0] == '-' || rest[0] == '+' || rest[0] == '*' || rest[0] == '>' || rest[0] == '=' || rest[0] == '|' || rest[0] == '~' || leadingOrderedList(rest) {
+	if rest[0] == '#' || rest[0] == '-' || rest[0] == '+' || rest[0] == '*' || rest[0] == '>' || rest[0] == '=' || rest[0] == '|' || rest[0] == '~' || rest[0] == ':' || leadingOrderedList(rest) {
 		return line[:i] + `\` + rest
 	}
 	return line
@@ -401,20 +423,33 @@ func exportBaseName(title string) string {
 	}
 	var b strings.Builder
 	for _, r := range title {
+		if r == '/' || r == '\\' {
+			b.WriteRune('-')
+			continue
+		}
 		if isUnsafeFilenameRune(r) {
 			continue
 		}
 		b.WriteRune(r)
 	}
 	name := strings.Join(strings.Fields(b.String()), " ")
+	for strings.Contains(name, "--") {
+		name = strings.ReplaceAll(name, "--", "-")
+	}
+	name = strings.Trim(name, "- ")
 	if name == "" {
 		name = "book"
 	}
-	return truncateGraphemes(name, 40)
+	name = truncateGraphemes(name, 40)
+	return truncateBytes(name, 200)
 }
 
 func isUnsafeFilenameRune(r rune) bool {
-	if r < 32 || r == 0x7f || r == 0x200b {
+	switch r {
+	case 0x7f, 0x200b, 0x200c, 0x200e, 0x200f, 0x2060, 0xfeff:
+		return true
+	}
+	if r < 32 {
 		return true
 	}
 	if r >= 0x202a && r <= 0x202e {
@@ -423,7 +458,31 @@ func isUnsafeFilenameRune(r rune) bool {
 	if r >= 0x2066 && r <= 0x2069 {
 		return true
 	}
-	return strings.ContainsRune(`\/:*?"<>|`, r)
+	return strings.ContainsRune(`:*?"<>|`, r)
+}
+
+// truncateBytes 按字节封顶，并且只在字形簇边界切开。
+func truncateBytes(s string, max int) string {
+	if max <= 0 || s == "" || len(s) <= max {
+		return s
+	}
+	i := 0
+	for i < len(s) {
+		w := graphemeLen(s[i:])
+		if w <= 0 || i+w > max {
+			break
+		}
+		i += w
+	}
+	if i == 0 {
+		return ""
+	}
+	out := s[:i]
+	out = strings.Trim(out, "- ")
+	if out == "" {
+		return "book"
+	}
+	return out
 }
 
 // truncateGraphemes 按字形簇截断，不把组合字符从基字上撕开。
@@ -446,31 +505,33 @@ func truncateGraphemes(s string, max int) string {
 
 func graphemeLen(s string) int {
 	r, size := utf8.DecodeRuneInString(s)
-	if r == utf8.RuneError && size == 0 {
+	if size == 0 {
 		return 0
 	}
 	if r == '\r' && strings.HasPrefix(s[size:], "\n") {
 		return size + 1
 	}
 	i := size
-	for i < len(s) && isGraphemeContinue(runeAt(s[i:])) {
-		_, w := utf8.DecodeRuneInString(s[i:])
-		i += w
-		if i > len(s) {
-			break
-		}
-	}
-	// 零宽连接符后面的字和它的组合标记仍算同一个簇（比如带连接符的表情）。
-	if i < len(s) {
-		prev, _ := utf8.DecodeLastRuneInString(s[:i])
-		next, w := utf8.DecodeRuneInString(s[i:])
-		if prev == 0x200d && next != utf8.RuneError {
-			i += w
-			for i < len(s) && isGraphemeContinue(runeAt(s[i:])) {
-				_, ww := utf8.DecodeRuneInString(s[i:])
-				i += ww
+	for {
+		for i < len(s) {
+			next, w := utf8.DecodeRuneInString(s[i:])
+			if !isGraphemeExtend(next) {
+				break
 			}
+			i += w
 		}
+		// 家庭表情这类 ZWJ 序列整段算一个簇：基字 + ZWJ + 下一个字，可以连多次。
+		if i+3 <= len(s) && runeAt(s[i:]) == 0x200d {
+			_, w := utf8.DecodeRuneInString(s[i:])
+			i += w
+			if i >= len(s) {
+				break
+			}
+			_, w = utf8.DecodeRuneInString(s[i:])
+			i += w
+			continue
+		}
+		break
 	}
 	if isRegionalIndicator(r) && i < len(s) {
 		next, w := utf8.DecodeRuneInString(s[i:])
@@ -486,11 +547,11 @@ func runeAt(s string) rune {
 	return r
 }
 
-func isGraphemeContinue(r rune) bool {
-	if unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc) {
+func isGraphemeExtend(r rune) bool {
+	if unicode.In(r, unicode.Mn, unicode.Me) {
 		return true
 	}
-	if r == 0x200d || (r >= 0xfe00 && r <= 0xfe0f) || (r >= 0xe0100 && r <= 0xe01ef) {
+	if (r >= 0xfe00 && r <= 0xfe0f) || (r >= 0xe0100 && r <= 0xe01ef) {
 		return true
 	}
 	return r >= 0x1f3fb && r <= 0x1f3ff

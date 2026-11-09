@@ -1,8 +1,10 @@
 package main
 
 import (
+	"math"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // shareFooter 印在分享卡底部。不放链接，也不引导到任何网站。
@@ -12,6 +14,8 @@ type textMeasure func(string) float64
 
 type shareLayoutLimits struct {
 	Vertical       bool
+	VerticalCellH  float64
+	NoteCellH      float64
 	MaxQuoteWidth  float64
 	MaxNoteWidth   float64
 	MaxQuoteLines  int
@@ -110,13 +114,13 @@ func layoutShareCardContent(in ShareCardInput, lim shareLayoutLimits, quoteMeasu
 		if runes < 1 {
 			runes = 1
 		}
-		content.QuoteColumns, content.QuoteTruncated = layoutVerticalText(quote, cols, runes)
+		content.QuoteColumns, content.QuoteTruncated = layoutVerticalTextMeasured(quote, cols, runes, lim.VerticalCellH, quoteMeasure)
 		if content.IncludeNote && lim.NoteMaxColumns > 0 {
 			nr := lim.NoteMaxRunes
 			if nr < 1 {
 				nr = runes
 			}
-			content.NoteColumns, content.NoteTruncated = layoutVerticalText(note, lim.NoteMaxColumns, nr)
+			content.NoteColumns, content.NoteTruncated = layoutVerticalTextMeasured(note, lim.NoteMaxColumns, nr, lim.NoteCellH, noteMeasure)
 		}
 		return content
 	}
@@ -338,6 +342,10 @@ func ellipsize(line string, maxWidth float64, measure textMeasure) string {
 // layoutVerticalText 把文字排成自上而下、自右向左的列。
 // 返回的第 0 列是最右边、最先读到的一列。放不下时，最后一列以 … 收尾。
 func layoutVerticalText(text string, maxCols, maxRunes int) ([]string, bool) {
+	return layoutVerticalTextMeasured(text, maxCols, maxRunes, 0, nil)
+}
+
+func layoutVerticalTextMeasured(text string, maxCols, maxRunes int, cellH float64, measure textMeasure) ([]string, bool) {
 	if maxCols < 1 {
 		maxCols = 1
 	}
@@ -353,9 +361,11 @@ func layoutVerticalText(text string, maxCols, maxRunes int) ([]string, bool) {
 	}
 	var cols [][]rune
 	var col []rune
+	used := 0
 	truncated := false
 	push := func() bool {
 		if len(col) == 0 {
+			used = 0
 			return true
 		}
 		if len(cols) >= maxCols {
@@ -364,27 +374,52 @@ func layoutVerticalText(text string, maxCols, maxRunes int) ([]string, bool) {
 		}
 		cols = append(cols, col)
 		col = nil
+		used = 0
 		return true
 	}
 	runes := []rune(text)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		if r == '\n' {
+	for i := 0; i < len(runes) && !truncated; {
+		if runes[i] == '\n' {
+			if !push() {
+				break
+			}
+			i++
+			continue
+		}
+		n := latinRunLength(runes[i:])
+		if n == 0 {
+			n = 1
+		}
+		token := string(runes[i : i+n])
+		cells := 1
+		if latinRunLength([]rune(token)) > 0 {
+			cells = latinCellCount(token, cellH, measure)
+		}
+		advance := n
+		if cells > maxRunes {
+			token = splitLatinToFit(token, maxRunes, cellH, measure)
+			cells = latinCellCount(token, cellH, measure)
+			if cells < 1 {
+				cells = 1
+			}
+			if cells > maxRunes {
+				cells = maxRunes
+			}
+			advance = utf8.RuneCountInString(token)
+		}
+		if used > 0 && used+cells > maxRunes {
 			if !push() {
 				break
 			}
 			continue
 		}
-		if len(col) >= maxRunes {
-			if !push() {
-				break
-			}
-		}
-		if len(cols) >= maxCols {
+		if used == 0 && len(cols) >= maxCols {
 			truncated = true
 			break
 		}
-		col = append(col, r)
+		col = append(col, []rune(token)...)
+		used += cells
+		i += advance
 	}
 	if !truncated && len(col) > 0 {
 		if !push() {
@@ -411,20 +446,64 @@ type verticalPiece struct {
 }
 
 func groupVerticalColumn(col string) []verticalPiece {
+	return groupVerticalPieces(col, 0, nil)
+}
+
+func groupVerticalPieces(col string, cellH float64, measure textMeasure) []verticalPiece {
 	rs := []rune(col)
 	var out []verticalPiece
 	for i := 0; i < len(rs); {
 		if n := latinRunLength(rs[i:]); n > 0 {
-			out = append(out, verticalPiece{Text: string(rs[i : i+n]), Cells: n, Latin: true})
+			text := string(rs[i : i+n])
+			out = append(out, verticalPiece{Text: text, Cells: latinCellCount(text, cellH, measure), Latin: true})
 			i += n
 			continue
 		}
 		r := rs[i]
-		piece := verticalPiece{Text: string(r), Cells: 1, Form: verticalPresentationForm(r), TopRight: isVerticalSentencePunct(r)}
-		out = append(out, piece)
+		out = append(out, verticalPiece{Text: string(r), Cells: 1, Form: verticalPresentationForm(r), TopRight: isVerticalSentencePunct(r)})
 		i++
 	}
 	return out
+}
+
+// latinCellCount 按转排后的高度占格。没有字体度量时退回一字一格。
+func latinCellCount(text string, cellH float64, measure textMeasure) int {
+	runes := utf8.RuneCountInString(text)
+	if runes < 1 {
+		return 1
+	}
+	if measure == nil || cellH <= 0 {
+		return runes
+	}
+	w := measure(strings.TrimSpace(text)) + 2
+	cells := int(math.Ceil(w / cellH))
+	if cells < 1 {
+		cells = 1
+	}
+	if cells > runes {
+		cells = runes
+	}
+	return cells
+}
+
+func splitLatinToFit(text string, maxCells int, cellH float64, measure textMeasure) string {
+	rs := []rune(text)
+	if len(rs) == 0 {
+		return ""
+	}
+	best := 1
+	for i := 1; i <= len(rs); i++ {
+		if latinCellCount(string(rs[:i]), cellH, measure) > maxCells {
+			break
+		}
+		best = i
+	}
+	for i := best; i > 1; i-- {
+		if rs[i-1] == ' ' {
+			return string(rs[:i-1])
+		}
+	}
+	return string(rs[:best])
 }
 
 func latinRunLength(rs []rune) int {
