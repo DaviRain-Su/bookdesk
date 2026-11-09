@@ -77,7 +77,8 @@ func migrate(d *sqlite.DB) error {
   char_offset INTEGER,
   text TEXT NOT NULL,
   color TEXT NOT NULL DEFAULT 'yellow',
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  page_label TEXT
 )`,
 		`CREATE TABLE IF NOT EXISTS cards (
   id TEXT PRIMARY KEY,
@@ -94,7 +95,8 @@ func migrate(d *sqlite.DB) error {
   source_book_id TEXT,
   character_name TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  quote_page_label TEXT
 )`,
 		`CREATE TABLE IF NOT EXISTS whiteboards (
   id TEXT PRIMARY KEY,
@@ -133,6 +135,13 @@ func migrate(d *sqlite.DB) error {
 		return err
 	}
 	if err := ensureColumn(d, "whiteboards", "folder", "ALTER TABLE whiteboards ADD COLUMN folder TEXT"); err != nil {
+		return err
+	}
+	// 章节名是后加的，只补列，不改已有划线和卡片。
+	if err := ensureColumn(d, "highlights", "page_label", "ALTER TABLE highlights ADD COLUMN page_label TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(d, "cards", "quote_page_label", "ALTER TABLE cards ADD COLUMN quote_page_label TEXT"); err != nil {
 		return err
 	}
 
@@ -551,10 +560,12 @@ func insertHighlight(h Highlight) error {
 		return err
 	}
 	_, err = d.Execute(context.Background(),
-		"INSERT INTO highlights (id, book_id, cfi, spine_index, href, char_offset, text, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		h.ID, h.BookID, optStringArg(h.Location.CFI), h.Location.SpineIndex, optStringArg(h.Location.Href), optIntArg(h.Location.CharOffset), h.Text, h.Color, h.CreatedAt)
+		"INSERT INTO highlights (id, book_id, cfi, spine_index, href, char_offset, text, color, created_at, page_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		h.ID, h.BookID, optStringArg(h.Location.CFI), h.Location.SpineIndex, optStringArg(h.Location.Href), optIntArg(h.Location.CharOffset), h.Text, h.Color, h.CreatedAt, optStringArg(h.Location.PageLabel))
 	return err
 }
+
+const highlightSelectCols = "id, book_id, cfi, spine_index, href, char_offset, text, color, created_at, page_label"
 
 func scanHighlight(row []any) Highlight {
 	return Highlight{
@@ -573,6 +584,16 @@ func scanHighlight(row []any) Highlight {
 	}
 }
 
+func finishHighlight(h Highlight, row []any) Highlight {
+	if len(row) > 9 {
+		h.Location.PageLabel = asOptString(row[9])
+	}
+	if h.Color == "" {
+		h.Color = "yellow"
+	}
+	return h
+}
+
 func listHighlights(bookID *string) ([]Highlight, error) {
 	d, err := db()
 	if err != nil {
@@ -581,21 +602,17 @@ func listHighlights(bookID *string) ([]Highlight, error) {
 	var rows sqlite.Rows
 	if bookID != nil {
 		rows, err = d.Query(context.Background(),
-			"SELECT id, book_id, cfi, spine_index, href, char_offset, text, color, created_at FROM highlights WHERE book_id = ? ORDER BY created_at ASC", *bookID)
+			"SELECT "+highlightSelectCols+" FROM highlights WHERE book_id = ? ORDER BY created_at ASC", *bookID)
 	} else {
 		rows, err = d.Query(context.Background(),
-			"SELECT id, book_id, cfi, spine_index, href, char_offset, text, color, created_at FROM highlights ORDER BY created_at ASC")
+			"SELECT "+highlightSelectCols+" FROM highlights ORDER BY created_at ASC")
 	}
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Highlight, 0, len(rows.Values))
 	for _, row := range rows.Values {
-		h := scanHighlight(row)
-		if h.Color == "" {
-			h.Color = "yellow"
-		}
-		out = append(out, h)
+		out = append(out, finishHighlight(scanHighlight(row), row))
 	}
 	return out, nil
 }
@@ -606,17 +623,14 @@ func findHighlightByCFI(bookID, cfi string) (*Highlight, error) {
 		return nil, err
 	}
 	rows, err := d.Query(context.Background(),
-		"SELECT id, book_id, cfi, spine_index, href, char_offset, text, color, created_at FROM highlights WHERE book_id = ? AND cfi = ? LIMIT 1", bookID, cfi)
+		"SELECT "+highlightSelectCols+" FROM highlights WHERE book_id = ? AND cfi = ? LIMIT 1", bookID, cfi)
 	if err != nil {
 		return nil, err
 	}
 	if len(rows.Values) == 0 {
 		return nil, nil
 	}
-	h := scanHighlight(rows.Values[0])
-	if h.Color == "" {
-		h.Color = "yellow"
-	}
+	h := finishHighlight(scanHighlight(rows.Values[0]), rows.Values[0])
 	return &h, nil
 }
 
@@ -645,7 +659,7 @@ func upsertCard(card Card) error {
 	if err != nil {
 		return err
 	}
-	var quoteBookID, quoteCFI, quoteHref any
+	var quoteBookID, quoteCFI, quoteHref, quotePage any
 	var quoteSpineIndex, quoteCharOffset any
 	if loc := card.QuoteLocation; loc != nil {
 		quoteBookID = loc.BookID
@@ -653,12 +667,13 @@ func upsertCard(card Card) error {
 		quoteSpineIndex = loc.SpineIndex
 		quoteHref = optStringArg(loc.Href)
 		quoteCharOffset = optIntArg(loc.CharOffset)
+		quotePage = optStringArg(loc.PageLabel)
 	}
 	_, err = d.Execute(context.Background(),
-		`INSERT INTO cards (id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET type = excluded.type, title = excluded.title, body = excluded.body, quote = excluded.quote, quote_book_id = excluded.quote_book_id, quote_cfi = excluded.quote_cfi, quote_spine_index = excluded.quote_spine_index, quote_href = excluded.quote_href, quote_char_offset = excluded.quote_char_offset, image_rel_path = excluded.image_rel_path, source_book_id = excluded.source_book_id, character_name = excluded.character_name, updated_at = excluded.updated_at`,
-		card.ID, card.Type, optStringArg(card.Title), optStringArg(card.Body), optStringArg(card.Quote), quoteBookID, quoteCFI, quoteSpineIndex, quoteHref, quoteCharOffset,
+		`INSERT INTO cards (id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, quote_page_label, image_rel_path, source_book_id, character_name, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET type = excluded.type, title = excluded.title, body = excluded.body, quote = excluded.quote, quote_book_id = excluded.quote_book_id, quote_cfi = excluded.quote_cfi, quote_spine_index = excluded.quote_spine_index, quote_href = excluded.quote_href, quote_char_offset = excluded.quote_char_offset, quote_page_label = excluded.quote_page_label, image_rel_path = excluded.image_rel_path, source_book_id = excluded.source_book_id, character_name = excluded.character_name, updated_at = excluded.updated_at`,
+		card.ID, card.Type, optStringArg(card.Title), optStringArg(card.Body), optStringArg(card.Quote), quoteBookID, quoteCFI, quoteSpineIndex, quoteHref, quoteCharOffset, quotePage,
 		optStringArg(card.ImageRelPath), optStringArg(card.SourceBookID), optStringArg(card.CharacterName), card.CreatedAt, card.UpdatedAt)
 	return err
 }
@@ -669,7 +684,7 @@ func listCards() ([]Card, error) {
 		return nil, err
 	}
 	rows, err := d.Query(context.Background(),
-		"SELECT id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at FROM cards ORDER BY created_at ASC")
+		"SELECT id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at, quote_page_label FROM cards ORDER BY created_at ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -683,6 +698,7 @@ func listCards() ([]Card, error) {
 				SpineIndex: asInt(row[7]),
 				Href:       asOptString(row[8]),
 				CharOffset: asOptInt(row[9]),
+				PageLabel:  asOptString(row[15]),
 			}
 		}
 		out = append(out, Card{

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Highlighter, Trash2, X } from "lucide-react";
+import { Highlighter, Share2, Trash2, X } from "lucide-react";
 import { Notes } from "../mygo";
+import { EXPORT_BOOK_EVENT, SHARE_CARD_EVENT } from "../lib/share";
 import type { Highlight } from "../types";
 import type { LibraryBook } from "./LibraryDrawer";
 
@@ -107,29 +108,65 @@ export default function ExcerptsPanel({ open, books, onClose, onOpenHighlight }:
           ) : null}
           {groups.map((group) => (
             <section key={group.bookId} className="excerpt-group">
-              <h3 className="excerpt-book">{group.title}</h3>
-              {group.items.map((item) => (
-                <div key={item.id} className="excerpt-item">
-                  <button
-                    className="excerpt-row"
-                    onClick={() => onOpenHighlight(item)}
-                    title="跳到书里的位置"
-                  >
-                    <span className="excerpt-text">{item.text}</span>
-                    <span className="excerpt-meta">
-                      {item.location.pageLabel ? <span>{item.location.pageLabel}</span> : null}
-                      <Highlighter size={12} />
-                    </span>
-                  </button>
-                  <button
-                    className="excerpt-delete"
-                    title="删除这条摘录"
-                    onClick={() => void remove(item)}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))}
+              <div className="excerpt-book-row">
+                <h3 className="excerpt-book">{group.title}</h3>
+                <button
+                  className="excerpt-export"
+                  title="导出这本书的公开页"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent(EXPORT_BOOK_EVENT, { detail: { bookId: group.bookId } }),
+                    )
+                  }
+                >
+                  导出
+                </button>
+              </div>
+              {group.items.map((item) => {
+                const book = books.find((entry) => entry.id === item.bookId);
+                return (
+                  <div key={item.id} className="excerpt-item">
+                    <button
+                      className="excerpt-row"
+                      onClick={() => onOpenHighlight(item)}
+                      title="跳到书里的位置"
+                    >
+                      <span className="excerpt-text">{item.text}</span>
+                      <span className="excerpt-meta">
+                        {item.location.pageLabel ? <span>{item.location.pageLabel}</span> : null}
+                        <Highlighter size={12} />
+                      </span>
+                    </button>
+                    <button
+                      className="excerpt-share"
+                      title="做成图片分享"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent(SHARE_CARD_EVENT, {
+                            detail: {
+                              bookId: item.bookId,
+                              bookTitle: book?.title,
+                              author: book?.author,
+                              chapter: item.location.pageLabel,
+                              quote: item.text,
+                              color: item.color,
+                            },
+                          }),
+                        )
+                      }
+                    >
+                      <Share2 size={13} />
+                    </button>
+                    <button
+                      className="excerpt-delete"
+                      title="删除这条摘录"
+                      onClick={() => void remove(item)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
             </section>
           ))}
         </div>

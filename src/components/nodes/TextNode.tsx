@@ -1,7 +1,8 @@
 import { useContext, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { MapPin, Quote, X } from "lucide-react";
+import { MapPin, Quote, Share2, X } from "lucide-react";
 import { ActiveBookContext } from "../ActiveBookContext";
+import { chapterFromSource, SHARE_CARD_EVENT } from "../../lib/share";
 import type { BookLocation } from "../../types";
 
 export interface TextNodeData {
@@ -70,7 +71,35 @@ export default function TextNode({ id, data, selected }: NodeProps) {
           <Quote size={13} className="quote-icon" />
           <p>{d.quote}</p>
           <div className="quote-foot">
-            {d.source ? <span className="quote-source">{d.source}</span> : null}
+            {d.source ? <span className="quote-source">{d.source}</span> : <span />}
+            <span className="quote-actions">
+            {d.quote ? (
+              <button
+                className="quote-locate nodrag"
+                title="做成图片分享"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const chapter =
+                    d.quoteLocation?.pageLabel || chapterFromSource(d.source) || null;
+                  const sourceTitle = d.source?.split(" · ")[0]?.trim();
+                  window.dispatchEvent(
+                    new CustomEvent(SHARE_CARD_EVENT, {
+                      detail: {
+                        bookId: d.sourceBookId ?? "",
+                        bookTitle: sourceTitle || undefined,
+                        chapter,
+                        quote: d.quote,
+                        note: (d.body ?? "").trim(),
+                        color: "yellow",
+                      },
+                    }),
+                  );
+                }}
+              >
+                <Share2 size={11} />
+                分享
+              </button>
+            ) : null}
             {d.quoteLocation && d.sourceBookId ? (
               <button
                 className="quote-locate nodrag"
@@ -92,6 +121,7 @@ export default function TextNode({ id, data, selected }: NodeProps) {
                 回到书里
               </button>
             ) : null}
+            </span>
           </div>
         </div>
       ) : null}

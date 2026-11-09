@@ -12,6 +12,8 @@ import ChatPanel, { type ChatTarget } from "./components/ChatPanel";
 import AskPanel, { type AskRequest } from "./components/AskPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import LookupPanel, { type LookupRequest } from "./components/LookupPanel";
+import ShareCardDialog from "./components/ShareCardDialog";
+import BookExportDialog from "./components/BookExportDialog";
 import ReaderView, { type ReaderBook } from "./components/reader/ReaderView";
 import type { ReaderProgress } from "./components/reader/useEpubReader";
 import { DEFAULT_READER_SETTINGS } from "./components/reader/settings";
@@ -20,6 +22,7 @@ import type { BookLocation, Highlight } from "./types";
 import { Board, Library, Notes, Reading, events, type ReadingSettings } from "./mygo";
 import { parseEdges, parseNodes, parseViewport } from "./lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "./lib/reveal";
+import { EXPORT_BOOK_EVENT, SHARE_CARD_EVENT, type ShareCardRequest } from "./lib/share";
 
 type Toast = { id: string; message: string; kind: "info" | "error" };
 
@@ -54,6 +57,8 @@ export default function App() {
   const [chatTarget, setChatTarget] = useState<ChatTarget | null>(null);
   const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
   const [lookup, setLookup] = useState<LookupRequest | null>(null);
+  const [shareRequest, setShareRequest] = useState<ShareCardRequest | null>(null);
+  const [exportBookId, setExportBookId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightCount, setHighlightCount] = useState(0);
   const [boardBookIds, setBoardBookIds] = useState<string[]>([]);
@@ -829,13 +834,33 @@ export default function App() {
         bookTitle: detail.bookTitle ?? "",
       });
     };
+    const onShare = (event: Event) => {
+      const detail = (event as CustomEvent<ShareCardRequest>).detail;
+      if (!detail?.quote?.trim()) return;
+      const book = books.find((item) => item.id === detail.bookId);
+      setShareRequest({
+        ...detail,
+        bookTitle: book?.title || detail.bookTitle || "未命名书籍",
+        author: book?.author ?? detail.author ?? null,
+        color: detail.color || "yellow",
+      });
+    };
+    const onExport = (event: Event) => {
+      const detail = (event as CustomEvent<{ bookId?: string }>).detail;
+      if (!detail?.bookId) return;
+      setExportBookId(detail.bookId);
+    };
     window.addEventListener("bookdesk:open-chat", onChat);
     window.addEventListener("bookdesk:ask-selection", onAsk);
     window.addEventListener("bookdesk:lookup-word", onLookup);
+    window.addEventListener(SHARE_CARD_EVENT, onShare);
+    window.addEventListener(EXPORT_BOOK_EVENT, onExport);
     return () => {
       window.removeEventListener("bookdesk:open-chat", onChat);
       window.removeEventListener("bookdesk:ask-selection", onAsk);
       window.removeEventListener("bookdesk:lookup-word", onLookup);
+      window.removeEventListener(SHARE_CARD_EVENT, onShare);
+      window.removeEventListener(EXPORT_BOOK_EVENT, onExport);
     };
   }, [books]);
 
@@ -1021,6 +1046,19 @@ export default function App() {
           </div>
         </div>
       ) : null}
+
+      <ShareCardDialog
+        request={shareRequest}
+        onClose={() => setShareRequest(null)}
+        onDone={(message) => toast(message)}
+        onError={(message) => toast(message, "error")}
+      />
+      <BookExportDialog
+        bookId={exportBookId}
+        onClose={() => setExportBookId(null)}
+        onDone={(message) => toast(message)}
+        onError={(message) => toast(message, "error")}
+      />
 
       <div className="toasts">
         {toasts.map((t) => (

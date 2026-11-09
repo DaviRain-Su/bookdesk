@@ -64,6 +64,18 @@ export interface Book {
   importedAt: number;
 }
 
+/** BookExportChoice 是用户勾选的一条。IncludeNote 默认应为 false。 */
+export interface BookExportChoice {
+  id: string;
+  includeNote: boolean;
+}
+
+/** BookExportInput 是一次导出。Items 为空时只导出书名和作者，不带任何划线或笔记。 */
+export interface BookExportInput {
+  bookId: string;
+  items: BookExportChoice[];
+}
+
 export interface BookLocation {
   bookId: string;
   cfi: string | null;
@@ -81,6 +93,28 @@ export interface BookProgress {
   percent: number;
   chapter: string;
   updatedAt: number;
+}
+
+/**
+ * BookShareItem 是一本书可以放进公开页的一条划线。
+ * Note 是读者自己的笔记，只在本机的选择界面里出现；导出时默认不带上。
+ */
+export interface BookShareItem {
+  id: string;
+  quote: string;
+  chapter: string;
+  color: string;
+  note: string;
+  createdAt: number;
+}
+
+/** BookShareList 是导出前给用户看的一本书：元数据，加上可勾选的划线。 */
+export interface BookShareList {
+  bookId: string;
+  title: string;
+  author: string;
+  language: string;
+  items: BookShareItem[];
 }
 
 export interface Card {
@@ -273,6 +307,35 @@ export interface SelectionAskInput {
   allowFuture: boolean;
   turnId: string;
   sessionKey: string;
+}
+
+/** ShareCardImage 是渲染好的 PNG。只在本机生成，不上传。 */
+export interface ShareCardImage {
+  pngBase64: string;
+  width: number;
+  height: number;
+}
+
+/**
+ * ShareCardInput 是一张划线分享卡要画的内容。
+ * IncludeNote 为 false 时，即使 Note 里有文字也不会画上去。
+ */
+export interface ShareCardInput {
+  quote: string;
+  note: string;
+  includeNote: boolean;
+  title: string;
+  author: string;
+  chapter: string;
+  color: string;
+  template: string;
+  ratio: string;
+}
+
+/** ShareFileResult 是用户保存文件的结果。取消对话框时 Cancelled 为 true，Path 为空。 */
+export interface ShareFileResult {
+  path: string;
+  cancelled: boolean;
 }
 
 export interface WordLookupInput {
@@ -478,6 +541,37 @@ export const Ai = {
   /** TestAgent 是设置页的「检测」：按当前设置确认 Agent 能启动。 */
   testAgent(): Promise<AgentTest> {
     return call("Ai.TestAgent");
+  },
+} as const;
+
+/**
+ * Share 把阅读分享到读者自己的文件里：一张图片，或一份静态页面。
+ * 不联网，不上传。笔记只有在调用方明确要求时才会写进结果。
+ */
+export const Share = {
+  /** CopyCardPNG 把分享卡的图片放进剪贴板。除此之外不写文件，也不联网。 */
+  copyCardPNG(input: ShareCardInput): Promise<void> {
+    return call("Share.CopyCardPNG", input);
+  },
+  /** ListBook 列出一本书可以放进公开页的划线。笔记文字只返回给本机界面，默认不导出。 */
+  listBook(bookID: string): Promise<BookShareList> {
+    return call("Share.ListBook", bookID);
+  },
+  /** RenderCard 把一条划线画成 PNG，给预览用。图片留在这次调用的返回值里。 */
+  renderCard(input: ShareCardInput): Promise<ShareCardImage> {
+    return call("Share.RenderCard", input);
+  },
+  /** SaveCardPNG 弹出保存对话框，把分享卡存成用户选定的 PNG。 */
+  saveCardPNG(input: ShareCardInput): Promise<ShareFileResult> {
+    return call("Share.SaveCardPNG", input);
+  },
+  /** SaveHTML 把读者勾选的内容写成一个不依赖网络的 HTML 文件。 */
+  saveHTML(input: BookExportInput): Promise<ShareFileResult> {
+    return call("Share.SaveHTML", input);
+  },
+  /** SaveMarkdown 把同一份勾选写成 Markdown。 */
+  saveMarkdown(input: BookExportInput): Promise<ShareFileResult> {
+    return call("Share.SaveMarkdown", input);
   },
 } as const;
 
