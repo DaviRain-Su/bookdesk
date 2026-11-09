@@ -498,6 +498,9 @@ func splitLatinToFit(text string, maxCells int, cellH float64, measure textMeasu
 		}
 		best = i
 	}
+	if best == len(rs) {
+		return string(rs)
+	}
 	for i := best; i > 1; i-- {
 		if rs[i-1] == ' ' {
 			return string(rs[:i-1])

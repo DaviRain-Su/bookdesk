@@ -356,7 +356,7 @@ func markdownSafeLine(line string) string {
 			b.WriteString("&gt;")
 		case '"':
 			b.WriteString("&quot;")
-		case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '{', '}', '|':
+		case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '{', '}', '|', '@':
 			// 反斜杠让链接、图片、表格和 kramdown 属性块失效。
 			// 尖括号用实体，避免 kramdown 把 \< 还原成原始标签。
 			b.WriteByte('\\')
@@ -372,6 +372,7 @@ func markdownSafeLine(line string) string {
 // 反斜杠在渲染后消失，读起来仍是原来的地址，但不会变成可点击的外链。
 func breakAutolinks(s string) string {
 	s = strings.ReplaceAll(s, "://", `:\/\/`)
+	s = breakMailto(s)
 	var b strings.Builder
 	lower := strings.ToLower(s)
 	i := 0
@@ -389,6 +390,24 @@ func breakAutolinks(s string) string {
 	return b.String()
 }
 
+func breakMailto(s string) string {
+	var b strings.Builder
+	lower := strings.ToLower(s)
+	i := 0
+	for i < len(s) {
+		j := strings.Index(lower[i:], "mailto:")
+		if j < 0 {
+			b.WriteString(s[i:])
+			break
+		}
+		j += i
+		b.WriteString(s[i : j+6])
+		b.WriteString(`\:`)
+		i = j + 7
+	}
+	return b.String()
+}
+
 // escapeMarkdownBlockStart 在行首的块标记前加反斜杠，避免 #、---、列表和引用改变文档结构。
 func escapeMarkdownBlockStart(line string) string {
 	i := 0
@@ -399,21 +418,34 @@ func escapeMarkdownBlockStart(line string) string {
 		return line
 	}
 	rest := line[i:]
-	if rest[0] == '#' || rest[0] == '-' || rest[0] == '+' || rest[0] == '*' || rest[0] == '>' || rest[0] == '=' || rest[0] == '|' || rest[0] == '~' || rest[0] == ':' || leadingOrderedList(rest) {
+	// 数字前面的反斜杠 CommonMark 不认，渲染出来会多出一个 \。
+	// 有序列表要转义的是后面的 . 或 )。
+	if dot := orderedListDelimiter(rest); dot >= 0 {
+		return line[:i] + rest[:dot] + `\` + rest[dot:]
+	}
+	if rest[0] == '#' || rest[0] == '-' || rest[0] == '+' || rest[0] == '*' || rest[0] == '>' || rest[0] == '=' || rest[0] == '|' || rest[0] == '~' || rest[0] == ':' {
 		return line[:i] + `\` + rest
 	}
 	return line
 }
 
 func leadingOrderedList(s string) bool {
+	return orderedListDelimiter(s) >= 0
+}
+
+// orderedListDelimiter 返回行首「数字 + . 或 )」里那个标点的下标，没有则是 -1。
+func orderedListDelimiter(s string) int {
 	i := 0
 	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
 		i++
 	}
 	if i == 0 || i >= len(s) {
-		return false
+		return -1
 	}
-	return s[i] == '.' || s[i] == ')'
+	if s[i] == '.' || s[i] == ')' {
+		return i
+	}
+	return -1
 }
 
 func exportBaseName(title string) string {
@@ -446,7 +478,7 @@ func exportBaseName(title string) string {
 
 func isUnsafeFilenameRune(r rune) bool {
 	switch r {
-	case 0x7f, 0x200b, 0x200c, 0x200e, 0x200f, 0x2060, 0xfeff:
+	case 0x7f, 0xad, 0x180e, 0x200b, 0x200c, 0x200e, 0x200f, 0x2060, 0xfeff:
 		return true
 	}
 	if r < 32 {
@@ -475,7 +507,7 @@ func truncateBytes(s string, max int) string {
 		i += w
 	}
 	if i == 0 {
-		return ""
+		return "book"
 	}
 	out := s[:i]
 	out = strings.Trim(out, "- ")

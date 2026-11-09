@@ -231,9 +231,65 @@ func TestMarkdownAttributesStructureAndAutolinks(t *testing.T) {
 			t.Fatalf("definition list: %q", line)
 		}
 	}
-	if !strings.Contains(md, `\1. first`) || !strings.Contains(md, `2\) second`) {
+	if !strings.Contains(md, `1\. first`) || !strings.Contains(md, `2\) second`) {
 		t.Fatalf("ordered markers missing:\n%s", md)
 	}
+}
+
+func TestNumberedSentencesDoNotShowABackslash(t *testing.T) {
+	when := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+	sentences := []string{
+		"2026年春天又读了一遍。",
+		"1个人推开门，屋里没人。",
+		"2026. The spring was quiet.",
+		"1. The first sentence still reads as a sentence.",
+		"3) People waited outside the bookshop.",
+	}
+	book := Book{ID: "b", Title: "书", Author: strPtr("作者")}
+	items := []BookShareItem{{
+		ID:    "hl:1",
+		Quote: "引文",
+		Note:  strings.Join(sentences, "\n"),
+		Color: "yellow",
+	}}
+	_, md := renderBookExport(book, items, []BookExportChoice{{ID: "hl:1", IncludeNote: true}}, when)
+	found := map[string]string{}
+	for _, line := range strings.Split(md, "\n") {
+		visible := visibleMarkdown(line)
+		for _, sentence := range sentences {
+			if visible == sentence {
+				found[sentence] = line
+			}
+		}
+		if leadingOrderedList(strings.TrimSpace(line)) {
+			t.Fatalf("list created: %q", line)
+		}
+	}
+	for _, sentence := range sentences {
+		line, ok := found[sentence]
+		if !ok {
+			t.Fatalf("missing sentence %q in\n%s", sentence, md)
+		}
+		if strings.Contains(visibleMarkdown(line), `\`) {
+			t.Fatalf("visible backslash in %q from %q", sentence, line)
+		}
+		if strings.Contains(line, `\1`) || strings.Contains(line, `\2026`) || strings.Contains(line, `\3`) {
+			t.Fatalf("backslash before a digit: %q", line)
+		}
+	}
+}
+
+func visibleMarkdown(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			b.WriteByte(s[i+1])
+			i++
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", `"`).Replace(b.String())
 }
 
 func TestHTMLEscapesNoteChapterAuthorAndNoReferrer(t *testing.T) {
@@ -304,6 +360,33 @@ func TestExportBaseNameAndSavePath(t *testing.T) {
 	}
 	if len(got) == 0 || len(got)%len(family) != 0 {
 		t.Fatalf("emoji cut mid-cluster: %q", got)
+	}
+	if exportBaseName("书\u00ad\u180e名") != "书名" {
+		t.Fatalf("soft hyphen = %q", exportBaseName("书\u00ad\u180e名"))
+	}
+	if exportBaseName("/") != "book" || exportBaseName("/书/") != "书" {
+		t.Fatalf("trim = %q %q", exportBaseName("/"), exportBaseName("/书/"))
+	}
+	var huge strings.Builder
+	huge.WriteRune('A')
+	for huge.Len() < 220 {
+		huge.WriteRune('\u200d')
+		huge.WriteRune('B')
+	}
+	if graphemeLen(huge.String()) != len(huge.String()) {
+		t.Fatalf("huge grapheme len %d bytes %d", graphemeLen(huge.String()), len(huge.String()))
+	}
+	if exportBaseName(huge.String()) != "book" {
+		t.Fatalf("oversized grapheme = %q", exportBaseName(huge.String()))
+	}
+	_, md := renderBookExport(Book{ID: "b", Title: "书"}, []BookShareItem{{
+		ID: "hl:1", Quote: "引文", Note: "写给 reader@example.com ，或 MAILTO:reader@example.com", Color: "yellow",
+	}}, []BookExportChoice{{ID: "hl:1", IncludeNote: true}}, time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC))
+	if strings.Contains(strings.ReplaceAll(md, `\@`, ""), "@") || strings.Contains(strings.ReplaceAll(strings.ToLower(md), `mailto\:`, ""), "mailto:") {
+		t.Fatalf("email autolink:\n%s", md)
+	}
+	if !strings.Contains(visibleMarkdown(md), "reader@example.com") || !strings.Contains(strings.ToLower(visibleMarkdown(md)), "mailto:reader@example.com") {
+		t.Fatalf("email unreadable:\n%s", md)
 	}
 
 	dir := t.TempDir()

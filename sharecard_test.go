@@ -161,6 +161,17 @@ func TestSanitizeShareTextAndVerticalPieces(t *testing.T) {
 	}
 }
 
+func TestSplitLatinBreaksAtSpaces(t *testing.T) {
+	measure := func(s string) float64 { return float64(len([]rune(s))) }
+	got := splitLatinToFit("Hello world", 8, 1, measure)
+	if got != "Hello" {
+		t.Fatalf("split = %q, want Hello", got)
+	}
+	if splitLatinToFit("Hello world", 20, 1, measure) != "Hello world" {
+		t.Fatalf("fitted run was split: %q", splitLatinToFit("Hello world", 20, 1, measure))
+	}
+}
+
 func TestLatinRunUsesRenderedCells(t *testing.T) {
 	measure := func(s string) float64 { return float64(len([]rune(s))) * 0.5 }
 	pieces := groupVerticalPieces("Hello, world!", 2, measure)
