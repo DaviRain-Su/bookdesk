@@ -95,6 +95,8 @@ export interface Card {
   characterName: string | null;
   createdAt: number;
   updatedAt: number;
+  /** 章节名。后加的列，旧卡片是 null。 */
+  chapter: string | null;
 }
 
 export interface ChapterText {
@@ -139,6 +141,8 @@ export interface Highlight {
   text: string;
   color: string;
   createdAt: number;
+  /** 章节名。后加的列，旧划线是 null。 */
+  chapter: string | null;
 }
 
 export interface ImportError {
@@ -231,6 +235,7 @@ export interface SaveCardInput {
   imageRelPath: string | null;
   sourceBookId: string | null;
   characterName: string | null;
+  chapter: string | null;
 }
 
 export interface SaveCharacterInput {
@@ -247,6 +252,7 @@ export interface SaveHighlightInput {
   location: BookLocation;
   text: string;
   color: string | null;
+  chapter: string | null;
 }
 
 export interface SearchHit {
@@ -273,6 +279,40 @@ export interface SelectionAskInput {
   allowFuture: boolean;
   turnId: string;
   sessionKey: string;
+}
+
+/** ShareCandidate 是一本书里可以公开的一条划线。Note 默认不导出。 */
+export interface ShareCandidate {
+  id: string;
+  kind: string;
+  quote: string;
+  note: string;
+  chapter: string;
+  color: string;
+  createdAt: number;
+}
+
+/** ShareBook 是导出公开页之前的清单。 */
+export interface ShareBook {
+  id: string;
+  title: string;
+  author: string;
+  items: ShareCandidate[];
+}
+
+/** ExportChoice 记录勾了哪些划线、哪些笔记。 */
+export interface ExportChoice {
+  quoteIds: string[];
+  noteIds: string[];
+}
+
+/** RenderedExport 是已经拼好的静态页，里面没有外部链接。 */
+export interface RenderedExport {
+  html: string;
+  markdown: string;
+  quoteCount: number;
+  noteCount: number;
+  suggestedBase: string;
 }
 
 export interface WordLookupInput {
@@ -478,6 +518,33 @@ export const Ai = {
   /** TestAgent 是设置页的「检测」：按当前设置确认 Agent 能启动。 */
   testAgent(): Promise<AgentTest> {
     return call("Ai.TestAgent");
+  },
+} as const;
+
+/**
+ * Share 把分享卡片和公开页留在本机。
+ * 保存和复制都要用户自己点；不会发到网上。
+ */
+export const Share = {
+  /** ListBook 列出一本书可以公开的划线。笔记在 note 里，默认不勾。 */
+  listBook(bookID: string): Promise<ShareBook> {
+    return call("Share.ListBook", bookID);
+  },
+  /** RenderExport 按勾选拼出 HTML 和 Markdown。没勾的笔记不会出现。 */
+  renderExport(bookID: string, choice: ExportChoice): Promise<RenderedExport> {
+    return call("Share.RenderExport", bookID, choice);
+  },
+  /** SavePNG 弹出保存对话框，把 PNG 写到用户选的位置。取消时返回空字符串。 */
+  savePNG(suggestedName: string, pngBase64: string): Promise<string> {
+    return call("Share.SavePNG", suggestedName, pngBase64);
+  },
+  /** CopyPNG 把 PNG 放进系统剪贴板。 */
+  copyPNG(pngBase64: string): Promise<void> {
+    return call("Share.CopyPNG", pngBase64);
+  },
+  /** SaveText 弹出保存对话框，把 HTML 或 Markdown 写到用户选的位置。 */
+  saveText(suggestedName: string, text: string): Promise<string> {
+    return call("Share.SaveText", suggestedName, text);
   },
 } as const;
 

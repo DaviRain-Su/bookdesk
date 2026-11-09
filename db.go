@@ -135,6 +135,13 @@ func migrate(d *sqlite.DB) error {
 	if err := ensureColumn(d, "whiteboards", "folder", "ALTER TABLE whiteboards ADD COLUMN folder TEXT"); err != nil {
 		return err
 	}
+	// 章节名是后加的，只为分享卡片和公开页。旧划线、旧卡片这一列是空的，原来的行不动。
+	if err := ensureColumn(d, "highlights", "chapter", "ALTER TABLE highlights ADD COLUMN chapter TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(d, "cards", "chapter", "ALTER TABLE cards ADD COLUMN chapter TEXT"); err != nil {
+		return err
+	}
 
 	// 中文按二元组建 FTS5 索引；建不出来时退回 instr 子串搜索。
 	if _, err := d.Execute(ctx, `CREATE VIRTUAL TABLE IF NOT EXISTS book_text_fts USING fts5(
@@ -551,10 +558,12 @@ func insertHighlight(h Highlight) error {
 		return err
 	}
 	_, err = d.Execute(context.Background(),
-		"INSERT INTO highlights (id, book_id, cfi, spine_index, href, char_offset, text, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		h.ID, h.BookID, optStringArg(h.Location.CFI), h.Location.SpineIndex, optStringArg(h.Location.Href), optIntArg(h.Location.CharOffset), h.Text, h.Color, h.CreatedAt)
+		"INSERT INTO highlights (id, book_id, cfi, spine_index, href, char_offset, text, color, created_at, chapter) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		h.ID, h.BookID, optStringArg(h.Location.CFI), h.Location.SpineIndex, optStringArg(h.Location.Href), optIntArg(h.Location.CharOffset), h.Text, h.Color, h.CreatedAt, optStringArg(h.Chapter))
 	return err
 }
+
+const highlightColumns = "id, book_id, cfi, spine_index, href, char_offset, text, color, created_at, chapter"
 
 func scanHighlight(row []any) Highlight {
 	return Highlight{
@@ -570,6 +579,7 @@ func scanHighlight(row []any) Highlight {
 		Text:      asString(row[6]),
 		Color:     asString(row[7]),
 		CreatedAt: asInt(row[8]),
+		Chapter:   asOptString(row[9]),
 	}
 }
 
@@ -581,10 +591,10 @@ func listHighlights(bookID *string) ([]Highlight, error) {
 	var rows sqlite.Rows
 	if bookID != nil {
 		rows, err = d.Query(context.Background(),
-			"SELECT id, book_id, cfi, spine_index, href, char_offset, text, color, created_at FROM highlights WHERE book_id = ? ORDER BY created_at ASC", *bookID)
+			"SELECT "+highlightColumns+" FROM highlights WHERE book_id = ? ORDER BY created_at ASC", *bookID)
 	} else {
 		rows, err = d.Query(context.Background(),
-			"SELECT id, book_id, cfi, spine_index, href, char_offset, text, color, created_at FROM highlights ORDER BY created_at ASC")
+			"SELECT "+highlightColumns+" FROM highlights ORDER BY created_at ASC")
 	}
 	if err != nil {
 		return nil, err
@@ -606,7 +616,7 @@ func findHighlightByCFI(bookID, cfi string) (*Highlight, error) {
 		return nil, err
 	}
 	rows, err := d.Query(context.Background(),
-		"SELECT id, book_id, cfi, spine_index, href, char_offset, text, color, created_at FROM highlights WHERE book_id = ? AND cfi = ? LIMIT 1", bookID, cfi)
+		"SELECT "+highlightColumns+" FROM highlights WHERE book_id = ? AND cfi = ? LIMIT 1", bookID, cfi)
 	if err != nil {
 		return nil, err
 	}
@@ -655,11 +665,11 @@ func upsertCard(card Card) error {
 		quoteCharOffset = optIntArg(loc.CharOffset)
 	}
 	_, err = d.Execute(context.Background(),
-		`INSERT INTO cards (id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET type = excluded.type, title = excluded.title, body = excluded.body, quote = excluded.quote, quote_book_id = excluded.quote_book_id, quote_cfi = excluded.quote_cfi, quote_spine_index = excluded.quote_spine_index, quote_href = excluded.quote_href, quote_char_offset = excluded.quote_char_offset, image_rel_path = excluded.image_rel_path, source_book_id = excluded.source_book_id, character_name = excluded.character_name, updated_at = excluded.updated_at`,
+		`INSERT INTO cards (id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at, chapter)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET type = excluded.type, title = excluded.title, body = excluded.body, quote = excluded.quote, quote_book_id = excluded.quote_book_id, quote_cfi = excluded.quote_cfi, quote_spine_index = excluded.quote_spine_index, quote_href = excluded.quote_href, quote_char_offset = excluded.quote_char_offset, image_rel_path = excluded.image_rel_path, source_book_id = excluded.source_book_id, character_name = excluded.character_name, updated_at = excluded.updated_at, chapter = COALESCE(NULLIF(excluded.chapter, ''), cards.chapter)`,
 		card.ID, card.Type, optStringArg(card.Title), optStringArg(card.Body), optStringArg(card.Quote), quoteBookID, quoteCFI, quoteSpineIndex, quoteHref, quoteCharOffset,
-		optStringArg(card.ImageRelPath), optStringArg(card.SourceBookID), optStringArg(card.CharacterName), card.CreatedAt, card.UpdatedAt)
+		optStringArg(card.ImageRelPath), optStringArg(card.SourceBookID), optStringArg(card.CharacterName), card.CreatedAt, card.UpdatedAt, optStringArg(card.Chapter))
 	return err
 }
 
@@ -669,7 +679,7 @@ func listCards() ([]Card, error) {
 		return nil, err
 	}
 	rows, err := d.Query(context.Background(),
-		"SELECT id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at FROM cards ORDER BY created_at ASC")
+		"SELECT id, type, title, body, quote, quote_book_id, quote_cfi, quote_spine_index, quote_href, quote_char_offset, image_rel_path, source_book_id, character_name, created_at, updated_at, chapter FROM cards ORDER BY created_at ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -697,6 +707,7 @@ func listCards() ([]Card, error) {
 			CharacterName: asOptString(row[12]),
 			CreatedAt:     asInt(row[13]),
 			UpdatedAt:     asInt(row[14]),
+			Chapter:       asOptString(row[15]),
 		})
 	}
 	return out, nil

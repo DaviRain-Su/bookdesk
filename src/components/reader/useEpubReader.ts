@@ -52,7 +52,8 @@ export type ReaderAction =
   | "lookup"
   | "ask"
   | "explain"
-  | "translate";
+  | "translate"
+  | "share";
 
 export interface UseEpubReaderOptions {
   bookId: string;
@@ -544,6 +545,7 @@ export function useEpubReader(
           },
           text,
           color,
+          chapter: chapterRef.current || null,
         });
         highlightTexts.current.set(saved.id, text);
         applyHighlight(cfiRange, saved.id, saved.color || color);
@@ -1221,6 +1223,7 @@ export function useEpubReader(
                   bookId,
                   bookTitle: titleRef.current || "未命名书籍",
                   quote: current.text,
+                  chapter: chapterRef.current || null,
                   source: `${titleRef.current || "未命名书籍"}${chapterRef.current ? ` · ${chapterRef.current}` : ""}`,
                   location: {
                     bookId,
@@ -1294,6 +1297,26 @@ export function useEpubReader(
           );
           setSelection(null);
         };
+        const onShareRequest = () => {
+          const current = selectionRef.current;
+          if (!current) return;
+          const text = current.text.trim();
+          if (!text) return;
+          window.dispatchEvent(
+            new CustomEvent("bookdesk:share-card", {
+              detail: {
+                bookId,
+                title: titleRef.current || "未命名书籍",
+                quote: text,
+                chapter: chapterRef.current || null,
+                color: current.existingId
+                  ? (highlightColors.current.get(current.existingId) ?? null)
+                  : null,
+              },
+            }),
+          );
+          setSelection(null);
+        };
         const onLookupRequest = () => {
           const current = selectionRef.current;
           if (!current) return;
@@ -1318,6 +1341,7 @@ export function useEpubReader(
           ask: () => onAskRequest("ask"),
           explain: () => onAskRequest("explain"),
           translate: () => onAskRequest("translate"),
+          share: onShareRequest,
         };
       } catch (err) {
         if (cancelled) return;

@@ -222,6 +222,7 @@ function BoardCanvas({
         imageRelPath: typeof data.imageRelPath === "string" ? data.imageRelPath : null,
         sourceBookId: typeof data.sourceBookId === "string" ? data.sourceBookId : null,
         characterName: null,
+        chapter: typeof data.chapter === "string" && data.chapter.trim() ? data.chapter.trim() : null,
       })
         .then((card) => {
           if (typeof data.cardId === "string") return;
@@ -376,6 +377,7 @@ function BoardCanvas({
             bookId?: string;
             quote?: string;
             source?: string;
+            chapter?: string | null;
             location?: BookLocation | null;
             title?: string;
             body?: string;
@@ -405,6 +407,7 @@ function BoardCanvas({
           body: detail.body ?? "",
           quote: detail.quote,
           source: detail.source ?? "",
+          chapter: detail.chapter ?? "",
           sourceBookId: detail.bookId ?? null,
           quoteLocation: detail.location ?? null,
         },
@@ -479,6 +482,7 @@ function BoardCanvas({
             body: note.note ?? "",
             quote: note.quote,
             source,
+            chapter: note.chapter ?? "",
             sourceBookId: note.bookId ?? null,
             quoteLocation: note.location ?? null,
           },

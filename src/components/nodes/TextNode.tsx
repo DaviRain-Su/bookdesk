@@ -1,6 +1,7 @@
 import { useContext, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { MapPin, Quote, X } from "lucide-react";
+import { MapPin, Quote, Share2, X } from "lucide-react";
+import { chapterFromSource } from "../../lib/shareCard";
 import { ActiveBookContext } from "../ActiveBookContext";
 import type { BookLocation } from "../../types";
 
@@ -10,6 +11,7 @@ export interface TextNodeData {
   body?: string;
   quote?: string;
   source?: string;
+  chapter?: string;
   sourceBookId?: string | null;
   quoteLocation?: BookLocation | null;
   tone?: "default" | "muted" | "other-book";
@@ -71,6 +73,30 @@ export default function TextNode({ id, data, selected }: NodeProps) {
           <p>{d.quote}</p>
           <div className="quote-foot">
             {d.source ? <span className="quote-source">{d.source}</span> : null}
+            <button
+              className="quote-locate nodrag"
+              title="做成分享卡片，保存在本机"
+              onClick={(event) => {
+                event.stopPropagation();
+                const chapter =
+                  (d.chapter ?? "").trim() || chapterFromSource(d.source) || null;
+                window.dispatchEvent(
+                  new CustomEvent("bookdesk:share-card", {
+                    detail: {
+                      bookId: d.sourceBookId ?? null,
+                      quote: d.quote ?? "",
+                      note: d.body ?? "",
+                      noteProvided: true,
+                      chapter,
+                      title: (d.source ?? "").split(" · ")[0] ?? "",
+                    },
+                  }),
+                );
+              }}
+            >
+              <Share2 size={11} />
+              分享
+            </button>
             {d.quoteLocation && d.sourceBookId ? (
               <button
                 className="quote-locate nodrag"

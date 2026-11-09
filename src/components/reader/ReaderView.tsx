@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  FileOutput,
   Languages,
   LibraryBig,
   List,
@@ -223,6 +224,21 @@ export default function ReaderView({
                 </div>
               ) : null}
             </div>
+            <button
+              className="reader-tool"
+              title="导出这本书的公开页"
+              onClick={() => {
+                setSettingsOpen(false);
+                setFindOpen(false);
+                setTocOpen(false);
+                setCharactersOpen(false);
+                window.dispatchEvent(
+                  new CustomEvent("bookdesk:export-book", { detail: { bookId: book.id } }),
+                );
+              }}
+            >
+              <FileOutput size={16} />
+            </button>
             <button
               className="reader-tool"
               title="摘录"

@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Languages,
+  FileOutput,
   List,
   Loader2,
   Maximize2,
@@ -126,6 +127,17 @@ export default function BookNode({ id, data, selected }: NodeProps) {
             disabled={reader.status !== "ready"}
           >
             <List size={15} />
+          </button>
+          <button
+            className="ghost-icon"
+            title="导出这本书的公开页"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("bookdesk:export-book", { detail: { bookId: d.bookId } }),
+              )
+            }
+          >
+            <FileOutput size={15} />
           </button>
           <button
             className="ghost-icon"

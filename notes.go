@@ -30,6 +30,7 @@ func (Notes) SaveHighlight(ctx context.Context, input SaveHighlightInput) (Highl
 		Text:      input.Text,
 		Color:     color,
 		CreatedAt: nowSeconds(),
+		Chapter:   clipOptional(input.Chapter, 200),
 	}
 	if err := insertHighlight(h); err != nil {
 		return Highlight{}, err
@@ -68,6 +69,7 @@ func (Notes) SaveCard(ctx context.Context, input SaveCardInput) (Card, error) {
 		CharacterName: input.CharacterName,
 		CreatedAt:     now,
 		UpdatedAt:     now,
+		Chapter:       clipOptional(input.Chapter, 200),
 	}
 	if err := upsertCard(card); err != nil {
 		return Card{}, err

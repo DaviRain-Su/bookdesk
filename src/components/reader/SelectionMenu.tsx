@@ -4,6 +4,7 @@ import {
   Languages,
   Lightbulb,
   Quote,
+  Share2,
   Sparkles,
   Trash2,
   UserRound,
@@ -64,6 +65,10 @@ export default function SelectionMenu({ selection, onAction }: Props) {
           ))}
         </span>
       </span>
+      <button onClick={() => onAction("share")}>
+        <Share2 size={13} />
+        分享
+      </button>
       {existing ? (
         <>
           <button onClick={() => onAction("card")}>

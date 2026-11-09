@@ -29,6 +29,7 @@ export interface Highlight {
   text: string;
   color: string;
   createdAt: number;
+  chapter?: string | null;
 }
 
 export type CardType = "text" | "image" | "character";
@@ -45,6 +46,7 @@ export interface Card {
   characterName?: string | null;
   createdAt: number;
   updatedAt: number;
+  chapter?: string | null;
 }
 
 export interface BoardNode {

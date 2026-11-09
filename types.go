@@ -56,6 +56,8 @@ type Highlight struct {
 	Text      string       `json:"text"`
 	Color     string       `json:"color"`
 	CreatedAt int64        `json:"createdAt"`
+	// Chapter 是后加的，旧库里没有这一列时读出来是空。不改已有的位置字段。
+	Chapter *string `json:"chapter"`
 }
 
 type Card struct {
@@ -70,6 +72,8 @@ type Card struct {
 	CharacterName *string       `json:"characterName"`
 	CreatedAt     int64         `json:"createdAt"`
 	UpdatedAt     int64         `json:"updatedAt"`
+	// Chapter 是后加的。卡片正文仍然是私人笔记，导出时默认不带。
+	Chapter *string `json:"chapter"`
 }
 
 // BoardData 是一块画布的完整状态；画布服务叫 Board，两个名字不能撞。
@@ -113,6 +117,7 @@ type SaveCardInput struct {
 	ImageRelPath  *string       `json:"imageRelPath"`
 	SourceBookID  *string       `json:"sourceBookId"`
 	CharacterName *string       `json:"characterName"`
+	Chapter       *string       `json:"chapter"`
 }
 
 type SaveHighlightInput struct {
@@ -121,6 +126,7 @@ type SaveHighlightInput struct {
 	Location BookLocation `json:"location"`
 	Text     string       `json:"text"`
 	Color    *string      `json:"color"`
+	Chapter  *string      `json:"chapter"`
 }
 
 // ---------- 人物与 AI ----------
@@ -239,4 +245,42 @@ type ImportNotesResult struct {
 	Total   int64          `json:"total"`
 	Skipped int64          `json:"skipped"`
 	Errors  []ImportError  `json:"errors"`
+}
+
+// ---------- 分享出去 ----------
+// 只在本机生成图片和静态页。下面这些类型不会自己发到网上。
+
+// ShareCandidate 是一本书里可以公开的一条划线。Note 是私人笔记，
+// 界面默认不勾；没勾的话不会写进导出的 HTML 或 Markdown。
+type ShareCandidate struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Quote     string `json:"quote"`
+	Note      string `json:"note"`
+	Chapter   string `json:"chapter"`
+	Color     string `json:"color"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+// ShareBook 是导出公开页之前给界面看的清单。
+type ShareBook struct {
+	ID     string           `json:"id"`
+	Title  string           `json:"title"`
+	Author string           `json:"author"`
+	Items  []ShareCandidate `json:"items"`
+}
+
+// ExportChoice 记录用户勾了哪些划线、哪些笔记。两边都可以是空的。
+type ExportChoice struct {
+	QuoteIDs []string `json:"quoteIds"`
+	NoteIDs  []string `json:"noteIds"`
+}
+
+// RenderedExport 是已经拼好的静态页。里面不该有外部链接。
+type RenderedExport struct {
+	HTML          string `json:"html"`
+	Markdown      string `json:"markdown"`
+	QuoteCount    int64  `json:"quoteCount"`
+	NoteCount     int64  `json:"noteCount"`
+	SuggestedBase string `json:"suggestedBase"`
 }

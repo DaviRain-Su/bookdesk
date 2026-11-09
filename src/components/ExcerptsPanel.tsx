@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Highlighter, Trash2, X } from "lucide-react";
+import { FileOutput, Highlighter, Share2, Trash2, X } from "lucide-react";
 import { Notes } from "../mygo";
 import type { Highlight } from "../types";
 import type { LibraryBook } from "./LibraryDrawer";
@@ -107,7 +107,21 @@ export default function ExcerptsPanel({ open, books, onClose, onOpenHighlight }:
           ) : null}
           {groups.map((group) => (
             <section key={group.bookId} className="excerpt-group">
-              <h3 className="excerpt-book">{group.title}</h3>
+              <div className="excerpt-group-head">
+                <h3 className="excerpt-book">{group.title}</h3>
+                <button
+                  className="excerpt-export"
+                  title="导出这本书的公开页"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("bookdesk:export-book", { detail: { bookId: group.bookId } }),
+                    )
+                  }
+                >
+                  <FileOutput size={13} />
+                  公开页
+                </button>
+              </div>
               {group.items.map((item) => (
                 <div key={item.id} className="excerpt-item">
                   <button
@@ -117,9 +131,31 @@ export default function ExcerptsPanel({ open, books, onClose, onOpenHighlight }:
                   >
                     <span className="excerpt-text">{item.text}</span>
                     <span className="excerpt-meta">
+                      {item.chapter ? <span>{item.chapter}</span> : null}
                       {item.location.pageLabel ? <span>{item.location.pageLabel}</span> : null}
                       <Highlighter size={12} />
                     </span>
+                  </button>
+                  <button
+                    className="excerpt-share"
+                    title="做成分享卡片"
+                    onClick={() => {
+                      const book = books.find((entry) => entry.id === item.bookId);
+                      window.dispatchEvent(
+                        new CustomEvent("bookdesk:share-card", {
+                          detail: {
+                            bookId: item.bookId,
+                            quote: item.text,
+                            title: book?.title ?? group.title,
+                            author: book?.author ?? null,
+                            chapter: item.chapter ?? null,
+                            color: item.color,
+                          },
+                        }),
+                      );
+                    }}
+                  >
+                    <Share2 size={13} />
                   </button>
                   <button
                     className="excerpt-delete"
