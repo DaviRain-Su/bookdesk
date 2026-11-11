@@ -11,6 +11,7 @@ import { convertHan } from "../../lib/han";
 import { REVEAL_EVENT, type RevealTarget } from "../../lib/reveal";
 import { highlightFill } from "./highlightColors";
 import { themeById, type ReaderTheme } from "./settings";
+import { bindPageKeys } from "../../lib/pageKeys";
 
 export interface TocEntry {
   label: string;
@@ -427,6 +428,13 @@ export function useEpubReader(
     let resizeObserver: ResizeObserver | null = null;
     const host = hostRef.current;
     if (!host) return;
+    let ready = false;
+    const pageKeys = bindPageKeys(host, options.mode ?? "card", () => ready, (direction) => {
+      const rendition = renditionRef.current;
+      if (!rendition) return;
+      if (direction === "prev") void rendition.prev();
+      else void rendition.next();
+    });
 
     setStatus("loading");
     setError("");
@@ -864,14 +872,6 @@ export function useEpubReader(
           }
         });
 
-        rendition.on("keydown", (event: KeyboardEvent) => {
-          if (event.key === "ArrowRight" || event.key === "PageDown") {
-            void rendition.next();
-          } else if (event.key === "ArrowLeft" || event.key === "PageUp") {
-            void rendition.prev();
-          }
-        });
-
         const showSelection = (
           cfiRange: string,
           text: string,
@@ -1014,6 +1014,8 @@ export function useEpubReader(
           boundDocs.add(doc);
           contentsByDoc.set(doc, contents);
           convertDoc(doc, latestSettingsRef.current?.convert ?? "none");
+          // epub.js 转发的 DOM 事件是 passive，不能阻止空格滚动等默认行为。
+          doc.addEventListener("keydown", pageKeys.onContentsKey, true);
           doc.addEventListener("mousemove", onHoverMove);
           doc.addEventListener("mouseleave", onHoverLeave);
           doc.addEventListener("click", onContentClick);
@@ -1085,6 +1087,7 @@ export function useEpubReader(
           /* 划线读取失败不影响阅读 */
         }
 
+        ready = true;
         setStatus("ready");
         onReadyRef.current?.();
         if (settingsRef.current) {
@@ -1352,6 +1355,8 @@ export function useEpubReader(
 
     return () => {
       cancelled = true;
+      ready = false;
+      pageKeys.destroy();
       actionRef.current = null;
       revealRef.current = null;
       pendingReveal.current = null;

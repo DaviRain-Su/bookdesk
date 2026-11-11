@@ -207,7 +207,8 @@ export default function BookNode({ id, data, selected }: NodeProps) {
       <footer className="book-footer">
         <button
           className="page-button"
-          title="上一页"
+          title="上一页（← / Page Up）"
+          aria-keyshortcuts="ArrowLeft PageUp"
           onClick={() => reader.turn("prev")}
           disabled={reader.status !== "ready"}
         >
@@ -227,7 +228,8 @@ export default function BookNode({ id, data, selected }: NodeProps) {
         </div>
         <button
           className="page-button"
-          title="下一页"
+          title="下一页（→ / Page Down / 空格）"
+          aria-keyshortcuts="ArrowRight PageDown Space"
           onClick={() => reader.turn("next")}
           disabled={reader.status !== "ready"}
         >

@@ -58,12 +58,17 @@ export default function ReaderView({
   onOpenExcerpts,
   onOpenSearch,
 }: Props) {
+  const readerRef = useRef<HTMLElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [charactersOpen, setCharactersOpen] = useState(false);
   const [characters, setCharacters] = useState<Character[] | null>(null);
+
+  useEffect(() => {
+    readerRef.current?.focus({ preventScroll: true });
+  }, [book.id]);
 
   const reader = useEpubReader(hostRef, {
     bookId: book.id,
@@ -172,6 +177,8 @@ export default function ReaderView({
 
   return (
     <section
+      ref={readerRef}
+      tabIndex={-1}
       className={`reader-overlay theme-${settings.theme}${settings.zen ? " is-zen" : ""}${
         spread ? " is-spread" : ""
       }`}
@@ -377,7 +384,8 @@ export default function ReaderView({
         <footer className="reader-foot">
           <button
             className="page-button"
-            title="上一页"
+            title="上一页（← / Page Up）"
+            aria-keyshortcuts="ArrowLeft PageUp"
             onClick={() => reader.turn("prev")}
             disabled={reader.status !== "ready"}
           >
@@ -399,7 +407,8 @@ export default function ReaderView({
           </div>
           <button
             className="page-button"
-            title="下一页"
+            title="下一页（→ / Page Down / 空格）"
+            aria-keyshortcuts="ArrowRight PageDown Space"
             onClick={() => reader.turn("next")}
             disabled={reader.status !== "ready"}
           >
