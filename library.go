@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -293,15 +294,11 @@ func importOne(path string) (Book, error) {
 		EpubRelPath:  fmt.Sprintf("books/%s/book.epub", id),
 		ImportedAt:   nowSeconds(),
 	}
-	if err := insertBook(book); err != nil {
-		return Book{}, err
-	}
-
 	chapters := make([]ChapterRow, len(parsed.Chapters))
 	for i, ch := range parsed.Chapters {
 		chapters[i] = ChapterRow{SpineIndex: ch.SpineIndex, Href: ch.Href, Text: ch.Text}
 	}
-	if err := insertChapters(book.ID, chapters); err != nil {
+	if err := insertBookWithChapters(book, chapters); err != nil {
 		return Book{}, err
 	}
 	ok = true
@@ -309,33 +306,40 @@ func importOne(path string) (Book, error) {
 }
 
 // textIndexVersion 是正文索引的版本。2 起目录页、封面页、扉页不再
-// 进搜索索引；旧库在启动时按这个版本重解析一次。
-const textIndexVersion = "2"
+// 进搜索索引；3 起原子替换正文，并重试之前未完整建立的索引。
+const textIndexVersion = "3"
 
-func migrateTextIndex() {
+func migrateTextIndex() error {
 	current, err := getSetting("text.version")
-	if err == nil && current != nil && *current == textIndexVersion {
-		return
+	if err != nil {
+		return err
+	}
+	if current != nil && *current == textIndexVersion {
+		return nil
 	}
 	books, err := listBooks()
 	if err != nil {
-		return
+		return err
 	}
+	var failures []error
 	for _, book := range books {
 		parsed, err := parseEpub(filepath.Join(booksDir, book.ID, "book.epub"))
 		if err != nil {
+			failures = append(failures, fmt.Errorf("解析 %s: %w", book.ID, err))
 			continue
 		}
 		chapters := make([]ChapterRow, len(parsed.Chapters))
 		for i, ch := range parsed.Chapters {
 			chapters[i] = ChapterRow{SpineIndex: ch.SpineIndex, Href: ch.Href, Text: ch.Text}
 		}
-		if len(chapters) == 0 {
-			continue
+		if err := insertChapters(book.ID, chapters); err != nil {
+			failures = append(failures, fmt.Errorf("更新 %s 的索引: %w", book.ID, err))
 		}
-		_ = insertChapters(book.ID, chapters)
 	}
-	_ = setSetting("text.version", textIndexVersion)
+	if len(failures) > 0 {
+		return errors.Join(failures...)
+	}
+	return setSetting("text.version", textIndexVersion)
 }
 
 func (Library) List(ctx context.Context) ([]Book, error) {

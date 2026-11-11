@@ -60,11 +60,14 @@ export default function AskPanel({ request, onClose }: Props) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<string | null>(null);
+  const streamKeyRef = useRef("");
   const autoSentRef = useRef("");
 
   const requestKey = request
     ? `${request.bookId}:${request.mode}:${request.selection}`
     : "";
+  const requestKeyRef = useRef(requestKey);
+  requestKeyRef.current = requestKey;
   const [messages, setMessages] = useState<AskMessage[]>([]);
   const [input, setInput] = useState("");
   const [allowFuture, setAllowFuture] = useState(false);
@@ -73,6 +76,11 @@ export default function AskPanel({ request, onClose }: Props) {
   const [toolStatus, setToolStatus] = useState("");
 
   useEffect(() => {
+    streamRef.current = null;
+    streamKeyRef.current = "";
+    setSending(false);
+    setStreamText("");
+    setToolStatus("");
     if (!request) {
       // 关掉面板后，同一段文字再点一次「解释」应该重新发。
       autoSentRef.current = "";
@@ -81,13 +89,21 @@ export default function AskPanel({ request, onClose }: Props) {
     setMessages(historyRef.current.get(requestKey) ?? []);
     setInput("");
     setAllowFuture(false);
-    setSending(false);
-    setStreamText("");
-    setToolStatus("");
+    let focusTimer: number | undefined;
     if (request.mode === "ask") {
-      window.setTimeout(() => inputRef.current?.focus(), 220);
+      autoSentRef.current = "";
+      focusTimer = window.setTimeout(() => inputRef.current?.focus(), 220);
     }
-  }, [requestKey, request]);
+    return () => {
+      window.clearTimeout(focusTimer);
+      const turnId = streamRef.current;
+      streamRef.current = null;
+      streamKeyRef.current = "";
+      if (turnId) void Ai.cancel(turnId).catch(() => {});
+    };
+    // 相同的书、动作和选区不重置正在进行的请求。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestKey]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -97,6 +113,7 @@ export default function AskPanel({ request, onClose }: Props) {
   useEffect(() => {
     const stop = events.acpUpdate.on((payload) => {
       if (!streamRef.current || streamRef.current !== payload.turnId) return;
+      if (streamKeyRef.current !== requestKeyRef.current) return;
       if (payload.kind === "text") {
         setStreamText((current) => current + payload.text);
         setToolStatus("");
@@ -110,16 +127,19 @@ export default function AskPanel({ request, onClose }: Props) {
   const appendTo = (key: string, message: AskMessage) => {
     const next = [...(historyRef.current.get(key) ?? []), message];
     historyRef.current.set(key, next);
-    setMessages((current) => (requestKey === key ? next : current));
+    if (requestKeyRef.current === key) {
+      setMessages((current) => (requestKeyRef.current === key ? next : current));
+    }
   };
 
   const send = async (questionOverride?: string) => {
-    if (!request || sending) return;
+    if (!request || streamRef.current) return;
     const question = (questionOverride ?? input).trim();
     if (request.mode === "ask" && !question) return;
     const sendKey = requestKey;
     const turnId = crypto.randomUUID();
     streamRef.current = turnId;
+    streamKeyRef.current = sendKey;
     setStreamText("");
     setToolStatus("");
     if (question) {
@@ -142,22 +162,27 @@ export default function AskPanel({ request, onClose }: Props) {
         turnId,
         sessionKey: sessionKeyFor(request.bookId, request.selection),
       });
+      if (streamRef.current !== turnId || requestKeyRef.current !== sendKey) return;
       appendTo(sendKey, {
         id: crypto.randomUUID(),
         role: reply.ok ? "assistant" : "error",
         text: reply.ok ? reply.text : reply.message,
       });
     } catch (err) {
+      if (streamRef.current !== turnId || requestKeyRef.current !== sendKey) return;
       appendTo(sendKey, {
         id: crypto.randomUUID(),
         role: "error",
         text: `请求失败：${errorText(err)}`,
       });
     } finally {
-      streamRef.current = null;
-      setStreamText("");
-      setToolStatus("");
-      setSending(false);
+      if (streamRef.current === turnId) {
+        streamRef.current = null;
+        streamKeyRef.current = "";
+        setStreamText("");
+        setToolStatus("");
+        setSending(false);
+      }
     }
   };
 
@@ -169,7 +194,7 @@ export default function AskPanel({ request, onClose }: Props) {
     void send(MODE_QUESTION[request.mode]);
     // send 只依赖当前 request 和输入，这里按 requestKey 触发一次即可。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestKey, request]);
+  }, [requestKey]);
 
   const stop = () => {
     if (streamRef.current) void Ai.cancel(streamRef.current).catch(() => {});

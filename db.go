@@ -283,9 +283,26 @@ func insertBook(book Book) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Execute(context.Background(),
-		"INSERT INTO books (id, title, author, language, cover_rel_path, epub_rel_path, collection, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		book.ID, book.Title, optStringArg(book.Author), optStringArg(book.Language), optStringArg(book.CoverRelPath), book.EpubRelPath, optStringArg(book.Collection), book.ImportedAt)
+	statement := bookInsertStatement(book)
+	_, err = d.Execute(context.Background(), statement.SQL, statement.Args...)
+	return err
+}
+
+func bookInsertStatement(book Book) sqlite.Statement {
+	return sqlite.Statement{
+		SQL:  "INSERT INTO books (id, title, author, language, cover_rel_path, epub_rel_path, collection, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		Args: []any{book.ID, book.Title, optStringArg(book.Author), optStringArg(book.Language), optStringArg(book.CoverRelPath), book.EpubRelPath, optStringArg(book.Collection), book.ImportedAt},
+	}
+}
+
+// 书籍元数据、正文和搜索索引一起提交，失败时不能留下半本书。
+func insertBookWithChapters(book Book, chapters []ChapterRow) error {
+	d, err := db()
+	if err != nil {
+		return err
+	}
+	statements := append([]sqlite.Statement{bookInsertStatement(book)}, chapterStatements(book.ID, chapters)...)
+	_, err = d.Transaction(context.Background(), statements)
 	return err
 }
 
@@ -312,14 +329,15 @@ type ChapterRow struct {
 }
 
 func insertChapters(bookID string, chapters []ChapterRow) error {
-	if len(chapters) == 0 {
-		return nil
-	}
 	d, err := db()
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	_, err = d.Transaction(context.Background(), chapterStatements(bookID, chapters))
+	return err
+}
+
+func chapterStatements(bookID string, chapters []ChapterRow) []sqlite.Statement {
 	var batch []sqlite.Statement
 	// 重新解析一本书时先清掉旧正文，避免留下目录页之类的旧行。
 	batch = append(batch, sqlite.Statement{
@@ -332,14 +350,6 @@ func insertChapters(bookID string, chapters []ChapterRow) error {
 			Args: []any{bookID},
 		})
 	}
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		_, err := d.Transaction(ctx, batch)
-		batch = batch[:0]
-		return err
-	}
 	for _, ch := range chapters {
 		batch = append(batch, sqlite.Statement{
 			SQL:  "INSERT INTO book_text (book_id, spine_index, href, text) VALUES (?, ?, ?, ?)",
@@ -351,13 +361,8 @@ func insertChapters(bookID string, chapters []ChapterRow) error {
 				Args: []any{searchTextFor(ch.Text), bookID, ch.SpineIndex},
 			})
 		}
-		if len(batch) >= 64 {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
 	}
-	return flush()
+	return batch
 }
 
 func chapterText(bookID string, spineIndex int64) (*ChapterText, error) {

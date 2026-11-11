@@ -141,7 +141,9 @@ func onReady() {
 	if err := openDB(); err != nil {
 		log.Fatalf("打开数据库失败: %v", err)
 	}
-	migrateTextIndex()
+	if err := migrateTextIndex(); err != nil {
+		log.Printf("部分正文索引更新失败，下次启动将重试: %v", err)
+	}
 
 	win := mygo.NewWindow(mygo.WindowOptions{
 		Title:           "书桌",

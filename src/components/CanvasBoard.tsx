@@ -27,6 +27,7 @@ import { Board, Characters, Notes, type ImportedNote } from "../mygo";
 import type { BookLocation } from "../types";
 import { serializeEdges, serializeNodes, type BoardMeta } from "../lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "../lib/reveal";
+import { createAutosave, flushOnLeave } from "../lib/autosave";
 
 const nodeTypes = {
   book: BookNode,
@@ -40,6 +41,11 @@ const deletedBoards = new Set<string>();
 
 export function markBoardDeleted(id: string) {
   deletedBoards.add(id);
+}
+
+export function restoreBoardSaving(id: string) {
+  deletedBoards.delete(id);
+  window.dispatchEvent(new CustomEvent("bookdesk:retry-board-save", { detail: { id } }));
 }
 
 function ZoomBar() {
@@ -76,6 +82,7 @@ interface Props {
   hasBooks: boolean;
   onAddBook: () => void;
   onOpenLibrary: () => void;
+  onSaveError: (message: string) => void;
 }
 
 function nodeSize(node: Node): { width: number; height: number } {
@@ -120,6 +127,7 @@ function BoardCanvas({
   hasBooks,
   onAddBook,
   onOpenLibrary,
+  onSaveError,
 }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges);
@@ -138,30 +146,35 @@ function BoardCanvas({
   const edgesRef = useRef(edges);
   edgesRef.current = edges;
   const viewportRef = useRef<Viewport>(initialViewport);
-  const saveTimer = useRef<number | null>(null);
   const hydrated = useRef(false);
   const lastBookIds = useRef("");
 
-  const flush = useCallback(() => {
-    if (saveTimer.current) {
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
+  const autosave = useMemo(
+    () => createAutosave(
+      (value: Parameters<typeof Board.save>[0]) =>
+        deletedBoards.has(value.id) ? Promise.resolve() : Board.save(value),
+      () => onSaveError("画布未能保存，改动暂留在当前窗口；请稍后重试。"),
+      500,
+    ),
+    [onSaveError],
+  );
+
+  const scheduleSave = useCallback(() => {
     if (deletedBoards.has(board.id)) return;
-    void Board.save({
+    autosave.schedule({
       id: board.id,
       name: board.name,
       viewportJson: JSON.stringify(viewportRef.current),
       nodesJson: serializeNodes(nodesRef.current),
       edgesJson: serializeEdges(edgesRef.current),
       updatedAt: Math.floor(Date.now() / 1000),
-    }).catch(() => {});
-  }, [board.id, board.name]);
+    });
+  }, [autosave, board.id, board.name]);
 
-  const scheduleSave = useCallback(() => {
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(flush, 500);
-  }, [flush]);
+  const flush = useCallback(() => {
+    scheduleSave();
+    void autosave.flush();
+  }, [autosave, scheduleSave]);
 
   useEffect(() => {
     if (!hydrated.current) {
@@ -172,13 +185,16 @@ function BoardCanvas({
   }, [nodes, edges, scheduleSave]);
 
   useEffect(() => {
-    const onBlur = () => flush();
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("blur", onBlur);
-      flush();
+    const retry = (event: Event) => {
+      if ((event as CustomEvent<{ id: string }>).detail?.id === board.id) flush();
     };
-  }, [flush]);
+    const stop = flushOnLeave(flush);
+    window.addEventListener("bookdesk:retry-board-save", retry);
+    return () => {
+      window.removeEventListener("bookdesk:retry-board-save", retry);
+      stop();
+    };
+  }, [board.id, flush]);
 
   useEffect(() => {
     const ids = nodes
@@ -206,7 +222,7 @@ function BoardCanvas({
           name,
           description: typeof data.description === "string" ? data.description : null,
           imageRelPath: typeof data.imageRelPath === "string" ? data.imageRelPath : null,
-        }).catch(() => {});
+        }).catch(() => onSaveError("人物卡未能保存，请稍后重新编辑保存。"));
         return;
       }
       if (node.type !== "text" && node.type !== "image") return;
@@ -229,9 +245,9 @@ function BoardCanvas({
             nds.map((n) => (n.id === node.id ? { ...n, data: { ...n.data, cardId: card.id } } : n)),
           );
         })
-        .catch(() => {});
+        .catch(() => onSaveError("笔记卡未能保存，请稍后重新编辑保存。"));
     },
-    [setNodes],
+    [onSaveError, setNodes],
   );
 
   const onConnect = useCallback(

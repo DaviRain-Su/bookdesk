@@ -14,7 +14,7 @@
 ## 环境要求
 
 - macOS（Apple Silicon 或 Intel）
-- Go 1.24 及以上
+- Go 1.27.3 及以上（与 `go.mod` 一致）
 - [Bun](https://bun.sh/)
 
 后端直接用上游 `github.com/egoist/mygo`，不再需要 Zig，也不需要本地 fork 或 `replace`。SQLite 原生库由 mygo 在 `dev` / `build` 时按插件的 `mygo-plugin.json` 自动下载并打包，不用手动装。
@@ -27,6 +27,18 @@ bun run dev
 ```
 
 `bun run dev` 由 mygo 编译 Go 后端、启动 Vite 开发服务器和开发版 `.app`，改 `.go` 文件会自动重编重启。只调前端时可以 `bun run dev:web` 单独起 Vite。
+
+## 开发检查
+
+```bash
+go test -count=1 ./...
+bun run test
+bun run typecheck
+```
+
+浏览器回归：运行 `bun run dev:web`，打开 `http://localhost:5173/tests/browser-regression.html`。
+页面会自动检查 AI 请求切换、保存失败提示与重试、删除画布失败后的保存，以及离开页面时的进度和设置保存。
+这些检查使用内存中的假书库和 AI 回复，不读写真实书库，也不调用模型服务；结果显示在页面底部。
 
 ## 打包
 

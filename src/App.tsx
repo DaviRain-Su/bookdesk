@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { event as appEvent, onFileDrop } from "mygo-runtime";
 import type { Edge, Node, Viewport } from "@xyflow/react";
 import TopBar, { type BoardOption } from "./components/TopBar";
 import Toolbar, { type Tool } from "./components/Toolbar";
-import CanvasBoard, { markBoardDeleted } from "./components/CanvasBoard";
+import CanvasBoard, { markBoardDeleted, restoreBoardSaving } from "./components/CanvasBoard";
 import LibraryDrawer, { type LibraryBook } from "./components/LibraryDrawer";
 import Sidebar from "./components/Sidebar";
 import ExcerptsPanel from "./components/ExcerptsPanel";
@@ -23,6 +23,7 @@ import { Board, Library, Notes, Reading, events, type ReadingSettings } from "./
 import { parseEdges, parseNodes, parseViewport } from "./lib/board";
 import { REVEAL_EVENT, type RevealTarget } from "./lib/reveal";
 import { EXPORT_BOOK_EVENT, SHARE_CARD_EVENT, type ShareCardRequest } from "./lib/share";
+import { createAutosave, flushOnLeave } from "./lib/autosave";
 
 type Toast = { id: string; message: string; kind: "info" | "error" };
 
@@ -80,10 +81,9 @@ export default function App() {
   const [readerSettingsReady, setReaderSettingsReady] = useState(false);
   const readerProgressRef = useRef<ReaderProgress | null>(null);
   const readerSettingsRef = useRef<ReadingSettings>(DEFAULT_READER_SETTINGS);
-  const settingsSaveTimer = useRef<number | null>(null);
   const openingReaderRef = useRef(false);
   const restoredReaderRef = useRef(false);
-  const progressSaveTimers = useRef<Map<string, number>>(new Map());
+  const deletingBoards = useRef(new Set<string>());
   const toastTimers = useRef<number[]>([]);
 
   const toast = useCallback((message: string, kind: Toast["kind"] = "info") => {
@@ -95,6 +95,16 @@ export default function App() {
     );
     toastTimers.current.push(timer);
   }, []);
+
+  const saveError = useCallback((message: string) => toast(message, "error"), [toast]);
+  const settingsAutosave = useMemo(
+    () => createAutosave(
+      Reading.saveSettings,
+      () => saveError("阅读设置未能保存，请稍后重试。"),
+      200,
+    ),
+    [saveError],
+  );
 
   useEffect(() => {
     return () => {
@@ -155,23 +165,15 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (settingsSaveTimer.current) window.clearTimeout(settingsSaveTimer.current);
-    };
-  }, []);
+  useEffect(() => flushOnLeave(() => void settingsAutosave.flush()), [settingsAutosave]);
 
   // 设置改动即时生效，写库稍微合并一下，避免连点字号时频繁落盘。
   const updateReaderSettings = useCallback((patch: Partial<ReadingSettings>) => {
     const next = { ...readerSettingsRef.current, ...patch };
     readerSettingsRef.current = next;
     setReaderSettings(next);
-    if (settingsSaveTimer.current) window.clearTimeout(settingsSaveTimer.current);
-    settingsSaveTimer.current = window.setTimeout(() => {
-      settingsSaveTimer.current = null;
-      void Reading.saveSettings(next).catch(() => {});
-    }, 200);
-  }, []);
+    settingsAutosave.schedule(next);
+  }, [settingsAutosave]);
 
   useEffect(() => {
     const onChanged = () => void refreshHighlights();
@@ -281,10 +283,14 @@ export default function App() {
 
   const deleteBoard = useCallback(
     async (id: string) => {
+      if (deletingBoards.current.has(id)) return;
+      deletingBoards.current.add(id);
+      let deleted = false;
       try {
         // 先标记，避免被删画布卸载时的最后一次保存又把它写回数据库。
         markBoardDeleted(id);
         await Board.delete(id);
+        deleted = true;
         const rest = boards.filter((b) => b.id !== id);
         setBoards(rest);
         if (board?.id === id) {
@@ -299,7 +305,10 @@ export default function App() {
           setChatTarget(null);
         }
       } catch (err) {
+        if (!deleted) restoreBoardSaving(id);
         toast(`删除画布失败：${errorText(err)}`, "error");
+      } finally {
+        deletingBoards.current.delete(id);
       }
     },
     [board?.id, boards, openBoard, toast],
@@ -518,7 +527,7 @@ export default function App() {
 
   // 书卡和全屏阅读翻页时都往这里报进度；写库前稍微合并一下。
   useEffect(() => {
-    const timers = progressSaveTimers.current;
+    const savers = new Map<string, ReturnType<typeof createAutosave<Parameters<typeof Reading.saveProgress>[0]>>>();
     const handler = (event: Event) => {
       const detail = (event as CustomEvent).detail as
         | {
@@ -531,28 +540,33 @@ export default function App() {
         | undefined;
       if (!detail?.bookId || !detail.cfi) return;
       const bookId = detail.bookId;
-      const previous = timers.get(bookId);
-      if (previous) window.clearTimeout(previous);
-      const timer = window.setTimeout(() => {
-        timers.delete(bookId);
-        void Reading.saveProgress({
-          bookId,
-          cfi: detail.cfi ?? "",
-          spineIndex: detail.spineIndex ?? 0,
-          percent: detail.percent ?? 0,
-          chapter: detail.chapter ?? "",
-          updatedAt: 0,
-        }).catch(() => {});
-      }, 300);
-      timers.set(bookId, timer);
+      let saver = savers.get(bookId);
+      if (!saver) {
+        saver = createAutosave(
+          Reading.saveProgress,
+          () => saveError("阅读进度未能保存，请稍后重试。"),
+          300,
+        );
+        savers.set(bookId, saver);
+      }
+      saver.schedule({
+        bookId,
+        cfi: detail.cfi,
+        spineIndex: detail.spineIndex ?? 0,
+        percent: detail.percent ?? 0,
+        chapter: detail.chapter ?? "",
+        updatedAt: 0,
+      });
     };
+    const stop = flushOnLeave(() => {
+      for (const saver of savers.values()) void saver.flush();
+    });
     window.addEventListener("bookdesk:book-progress", handler);
     return () => {
       window.removeEventListener("bookdesk:book-progress", handler);
-      for (const timer of timers.values()) window.clearTimeout(timer);
-      timers.clear();
+      stop();
     };
-  }, []);
+  }, [saveError]);
 
   // 启动时恢复上次的模式；空画布、新用户和找不到的书都留在书桌。
   useEffect(() => {
@@ -977,6 +991,7 @@ export default function App() {
               setSearchOpen(false);
               setLibraryOpen(true);
             }}
+            onSaveError={saveError}
           />
         ) : (
           <div className="canvas-wrap canvas-loading">正在打开画布…</div>
