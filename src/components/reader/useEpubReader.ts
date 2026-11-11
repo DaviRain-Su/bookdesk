@@ -47,6 +47,7 @@ export type ReaderAction =
   | "highlight"
   | "recolor"
   | "card"
+  | "share"
   | "remove"
   | "character"
   | "lookup"
@@ -1237,6 +1238,28 @@ export function useEpubReader(
             setSelection(null);
           })();
         };
+        const onShareRequest = () => {
+          const current = selectionRef.current;
+          if (!current) return;
+          const text = current.text.trim();
+          if (!text) return;
+          const color = current.existingId
+            ? highlightColors.current.get(current.existingId) || "yellow"
+            : "yellow";
+          window.dispatchEvent(
+            new CustomEvent("bookdesk:share-card", {
+              detail: {
+                bookId,
+                bookTitle: titleRef.current || "未命名书籍",
+                chapter: chapterRef.current || null,
+                quote: text,
+                color,
+              },
+            }),
+          );
+          clearSelection();
+          setSelection(null);
+        };
         const onDeleteRequest = () => {
           const current = selectionRef.current;
           if (!current?.existingId) return;
@@ -1312,6 +1335,7 @@ export function useEpubReader(
           highlight: onHighlightRequest,
           recolor: onRecolorRequest,
           card: onCardRequest,
+          share: onShareRequest,
           remove: onDeleteRequest,
           character: onCharacterRequest,
           lookup: onLookupRequest,

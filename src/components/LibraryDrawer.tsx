@@ -1,4 +1,5 @@
-import { BookOpen, BookPlus, FolderInput, Plus, X } from "lucide-react";
+import { BookOpen, BookPlus, FileOutput, FolderInput, Plus, X } from "lucide-react";
+import { EXPORT_BOOK_EVENT } from "../lib/share";
 
 export interface LibraryBook {
   id: string;
@@ -107,6 +108,18 @@ export default function LibraryDrawer({
                       onClick={() => onAdd(book)}
                     >
                       <Plus size={15} />
+                    </button>
+                    <button
+                      className="library-action"
+                      title="导出公开页"
+                      aria-label="导出公开页"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent(EXPORT_BOOK_EVENT, { detail: { bookId: book.id } }),
+                        )
+                      }
+                    >
+                      <FileOutput size={15} />
                     </button>
                   </div>
                 </div>

@@ -169,7 +169,7 @@ func onReady() {
 
 func main() {
 	mygo.App.SetName("书桌")
-	mygo.Bind(Library{}, Notes{}, Board{}, Search{}, Characters{}, Reading{}, Ai{})
+	mygo.Bind(Library{}, Notes{}, Board{}, Search{}, Characters{}, Reading{}, Ai{}, Share{})
 	if err := mygo.Protocol.HandleFunc("books", handleBooksProtocol); err != nil {
 		log.Fatalf("注册 books 协议失败: %v", err)
 	}

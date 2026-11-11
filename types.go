@@ -240,3 +240,62 @@ type ImportNotesResult struct {
 	Skipped int64          `json:"skipped"`
 	Errors  []ImportError  `json:"errors"`
 }
+
+// ShareCardInput 是一张划线分享卡要画的内容。
+// IncludeNote 为 false 时，即使 Note 里有文字也不会画上去。
+type ShareCardInput struct {
+	Quote       string `json:"quote"`
+	Note        string `json:"note"`
+	IncludeNote bool   `json:"includeNote"`
+	Title       string `json:"title"`
+	Author      string `json:"author"`
+	Chapter     string `json:"chapter"`
+	Color       string `json:"color"`
+	Template    string `json:"template"`
+	Ratio       string `json:"ratio"`
+}
+
+// ShareCardImage 是渲染好的 PNG。只在本机生成，不上传。
+type ShareCardImage struct {
+	PNGBase64 string `json:"pngBase64"`
+	Width     int64  `json:"width"`
+	Height    int64  `json:"height"`
+}
+
+// ShareFileResult 是用户保存文件的结果。取消对话框时 Cancelled 为 true，Path 为空。
+type ShareFileResult struct {
+	Path      string `json:"path"`
+	Cancelled bool   `json:"cancelled"`
+}
+
+// BookShareItem 是一本书可以放进公开页的一条划线。
+// Note 是读者自己的笔记，只在本机的选择界面里出现；导出时默认不带上。
+type BookShareItem struct {
+	ID        string `json:"id"`
+	Quote     string `json:"quote"`
+	Chapter   string `json:"chapter"`
+	Color     string `json:"color"`
+	Note      string `json:"note"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
+// BookShareList 是导出前给用户看的一本书：元数据，加上可勾选的划线。
+type BookShareList struct {
+	BookID   string          `json:"bookId"`
+	Title    string          `json:"title"`
+	Author   string          `json:"author"`
+	Language string          `json:"language"`
+	Items    []BookShareItem `json:"items"`
+}
+
+// BookExportChoice 是用户勾选的一条。IncludeNote 默认应为 false。
+type BookExportChoice struct {
+	ID          string `json:"id"`
+	IncludeNote bool   `json:"includeNote"`
+}
+
+// BookExportInput 是一次导出。Items 为空时只导出书名和作者，不带任何划线或笔记。
+type BookExportInput struct {
+	BookID string             `json:"bookId"`
+	Items  []BookExportChoice `json:"items"`
+}

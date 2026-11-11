@@ -4,6 +4,7 @@ import {
   Languages,
   Lightbulb,
   Quote,
+  Share2,
   Sparkles,
   Trash2,
   UserRound,
@@ -70,6 +71,10 @@ export default function SelectionMenu({ selection, onAction }: Props) {
             <Quote size={13} />
             生成卡片
           </button>
+          <button onClick={() => onAction("share")}>
+            <Share2 size={13} />
+            分享
+          </button>
           {aiButtons}
           <button className="is-danger" onClick={() => onAction("remove")}>
             <Trash2 size={13} />
@@ -81,6 +86,10 @@ export default function SelectionMenu({ selection, onAction }: Props) {
           <button onClick={() => onAction("card")}>
             <Quote size={13} />
             生成卡片
+          </button>
+          <button onClick={() => onAction("share")}>
+            <Share2 size={13} />
+            分享
           </button>
           <button onClick={() => onAction("character")}>
             <UserRound size={13} />

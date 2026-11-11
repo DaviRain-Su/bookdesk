@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  FileOutput,
   Languages,
   LibraryBig,
   List,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { Characters, type Character, type ReadingSettings } from "../../mygo";
 import { convertHan } from "../../lib/han";
+import { EXPORT_BOOK_EVENT } from "../../lib/share";
 import type { RevealTarget } from "../../lib/reveal";
 import FindPopover from "./FindPopover";
 import ReaderSettingsPanel from "./ReaderSettingsPanel";
@@ -223,6 +225,21 @@ export default function ReaderView({
                 </div>
               ) : null}
             </div>
+            <button
+              className="reader-tool"
+              title="导出这本书的公开页"
+              onClick={() => {
+                setSettingsOpen(false);
+                setFindOpen(false);
+                setTocOpen(false);
+                setCharactersOpen(false);
+                window.dispatchEvent(
+                  new CustomEvent(EXPORT_BOOK_EVENT, { detail: { bookId: book.id } }),
+                );
+              }}
+            >
+              <FileOutput size={16} />
+            </button>
             <button
               className="reader-tool"
               title="摘录"
