@@ -13,7 +13,7 @@
 
 ## 环境要求
 
-- macOS（Apple Silicon 或 Intel）
+- macOS 13 及以上（Apple Silicon 或 Intel）
 - Go 1.27.3 及以上（与 `go.mod` 一致）
 - [Bun](https://bun.sh/)
 

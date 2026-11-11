@@ -3,6 +3,9 @@
   "slug": "bookdesk",
   "identifier": "dev.davirian.bookdesk",
   "version": "0.1.0",
+  "macos": {
+    "minimumSystemVersion": "13.0"
+  },
   "bindings": "src/mygo.ts",
   "devUrl": "http://localhost:5173",
   "devCommand": "bun run dev:web",

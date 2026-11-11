@@ -12,6 +12,6 @@
 - 完善键盘翻页：← / →、Page Up / Page Down、空格与 Shift+空格；书页内外均可使用，输入、弹窗和多书场景有焦点保护。
 - 修复导入失败后的回滚、自动保存失败重试，以及切换选区或关闭 AI 面板后的旧请求覆盖。
 
-macOS 安装包为 Universal，包含 Apple Silicon 与 Intel 两种架构，应用声明最低系统版本为 macOS 12。
+macOS 安装包为 Universal，包含 Apple Silicon 与 Intel 两种架构，需要 macOS 13 及以上版本。
 安装包采用临时签名（ad hoc），未使用 Developer ID 签名，也未经过 Apple 公证。
 首次打开如被 macOS 拦截，可在「系统设置 → 隐私与安全性」中确认是否仍要打开。
